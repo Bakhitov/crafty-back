@@ -105,7 +105,7 @@ def get_agno_assist(
         search_knowledge=True,
         # -*- Storage -*-
         # Storage chat history and session state in a Postgres table
-        storage=PostgresAgentStorage(table_name="agno_assist_sessions", db_url=db_url),
+        storage=PostgresAgentStorage(table_name="sessions", db_url=db_url),
         # -*- History -*-
         # Send the last 3 messages from the chat history
         add_history_to_messages=True,

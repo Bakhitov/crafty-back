@@ -1,18 +1,4 @@
 services:
-  pgvector:
-    image: agnohq/pgvector:16
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    environment:
-      POSTGRES_USER: ${DB_USER:-ai}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-ai}
-      POSTGRES_DB: ${DB_NAME:-ai}
-    networks:
-      - agent-api
-
   api:
     build:
       context: .
@@ -28,22 +14,19 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       # AGNO_MONITOR: "True"
       # AGNO_API_KEY: ${AGNO_API_KEY}
-      DB_HOST: pgvector
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-ai}
-      DB_PASS: ${DB_PASSWORD:-ai}
-      DB_DATABASE: ${DB_NAME:-ai}
-      WAIT_FOR_DB: "True"
+      DB_URL: ${DB_URL:-postgresql://postgres:Ginifi51!@db.wyehpfzafbjfvyjzgjss.supabase.co:5432/postgres}
+      DB_HOST: ${DB_HOST:-db.wyehpfzafbjfvyjzgjss.supabase.co}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASSWORD:-Ginifi51!}
+      DB_DATABASE: ${DB_NAME:-postgres}
+      DB_SCHEME: ${DB_SCHEME:-ai}
+      WAIT_FOR_DB: "False"
       PRINT_ENV_ON_LOAD: "True"
     networks:
       - agent-api
-    depends_on:
-      - pgvector
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 networks:
   agent-api:
-
-volumes:
-  pgdata:

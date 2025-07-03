@@ -6,14 +6,31 @@ readme = "README.md"
 authors = [{ name = "Agno", email = "hello@agno.com" }]
 
 dependencies = [
-  "agno==1.4.6",
+  "agno==1.7.0",
+  "alembic",
+  "anthropic",
+  "ollama",
+  "google-genai",
   "duckduckgo-search",
   "fastapi[standard]",
   "openai",
   "pgvector",
   "psycopg[binary]",
+  "psycopg2-binary",
+  "PyJWT",
   "sqlalchemy",
   "yfinance",
+  "httpx",
+  "python-docx",
+  "pypdf",
+  "python-pptx",
+  "openpyxl",
+  "aiofiles",
+  "mcp",
+  "elevenlabs",
+  "pillow",
+  "groq",
+  "requests"
 ]
 
 [project.optional-dependencies]

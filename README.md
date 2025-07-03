@@ -2,7 +2,7 @@
 
 Welcome to the Simple Agent API: a robust, production-ready application for serving Agents as an API. It includes:
   * A **FastAPI server** for handling API requests.
-  * A **PostgreSQL database** for storing Agent sessions, knowledge, and memories.
+  * **PostgreSQL database support** for storing Agent sessions, knowledge, and memories.
   * A set of **pre-built Agents** to use as a starting point.
 
 For more information, checkout [Agno](https://agno.link/gh) and give it a ⭐️
@@ -11,7 +11,9 @@ For more information, checkout [Agno](https://agno.link/gh) and give it a ⭐️
 
 Follow these steps to get your Agent API up and running:
 
-> Prerequisites: [docker desktop](https://www.docker.com/products/docker-desktop) should be installed and running.
+> Prerequisites: 
+> - [docker desktop](https://www.docker.com/products/docker-desktop) should be installed and running.
+> - A PostgreSQL database (you can use the included example.env for Supabase configuration).
 
 ### Clone the repo
 
@@ -20,15 +22,28 @@ git clone https://github.com/agno-agi/agent-api.git
 cd agent-api
 ```
 
-### Configure API keys
+### Configure environment variables
 
-We use GPT 4.1 as the default model, please export the `OPENAI_API_KEY` environment variable to get started.
+First, copy the example environment file and update it with your configuration:
 
 ```sh
-export OPENAI_API_KEY="YOUR_API_KEY_HERE"
+cp example.env .env
 ```
 
-> **Note**: You can use any model provider, just update the agents in the `/agents` folder.
+Edit the `.env` file to set your API keys and database configuration:
+
+```sh
+# Required: OpenAI API key for GPT 4.1 model
+export OPENAI_API_KEY="YOUR_API_KEY_HERE"
+
+# Database configuration (example for Supabase is provided in example.env)
+export DB_URL="postgresql://username:password@host:port/database"
+export DB_SCHEME="ai"
+```
+
+> **Note**: 
+> - You can use any model provider, just update the agents in the `/agents` folder.
+> - The `example.env` file contains a sample Supabase database configuration.
 
 ### Start the application
 
@@ -40,7 +55,6 @@ docker compose up -d
 
 This command starts:
 * The **FastAPI server**, running on [http://localhost:8000](http://localhost:8000).
-* The **PostgreSQL database**, accessible on `localhost:5432`.
 
 Once started, you can:
 * Test the API at [http://localhost:8000/docs](http://localhost:8000/docs).
@@ -190,5 +204,6 @@ The general process to run in production is:
   The specific deployment steps will vary depending on the chosen provider. Generally, you'll point the service to your container image in the registry and configure aspects like port mapping (the application runs on port 8000 by default inside the container), environment variables, scaling parameters, and any necessary database connections.
 
 4. **Database Configuration**
-  * The default `docker-compose.yml` sets up a PostgreSQL database for local development. In production, you will typically use a managed database service provided by your cloud provider (e.g., AWS RDS, Google Cloud SQL, Azure Database for PostgreSQL) for better reliability, scalability, and manageability.
-  * Ensure your deployed application is configured with the correct database connection URL for your production database instance. This is usually set via an environment variables.
+  * This application requires an external PostgreSQL database. For production, use a managed database service provided by your cloud provider (e.g., AWS RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Supabase) for better reliability, scalability, and manageability.
+  * Ensure your deployed application is configured with the correct database connection URL via the `DB_URL` environment variable. You can also set individual database parameters (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, etc.) if preferred.
+  * The database schema should be set to `ai` via the `DB_SCHEME` environment variable.
