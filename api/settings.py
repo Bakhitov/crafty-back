@@ -30,6 +30,8 @@ class ApiSettings(BaseSettings):
         valid_cors.append("http://localhost")
         # Add localhost:3000 to cors to allow requests from local Agent UI.
         valid_cors.append("http://localhost:3000")
+        # Add Vercel frontend domain to cors to allow requests from production frontend.
+        valid_cors.append("https://crafty-rosy.vercel.app")
 
         return valid_cors
 
