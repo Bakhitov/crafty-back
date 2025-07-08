@@ -1,0 +1,111 @@
+[project]
+name = "agent-api"
+version = "0.1.0"
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [{ name = "Agno", email = "hello@agno.com" }]
+
+dependencies = [
+  "agno==1.7.0",
+  "alembic",
+  "anthropic",
+  "ollama",
+  "google-genai",
+  "duckduckgo-search",
+  "fastapi[standard]",
+  "openai",
+  "pgvector",
+  "psycopg[binary]",
+  "psycopg2-binary",
+  "PyJWT",
+  "sqlalchemy",
+  "yfinance",
+  "httpx",
+  "python-docx",
+  "pypdf",
+  "python-pptx",
+  "openpyxl",
+  "aiofiles",
+  "mcp",
+  "elevenlabs",
+  "pillow",
+  "groq",
+  "requests",
+  "uvicorn[standard]",
+  "starlette",
+  "pydantic-settings",
+  "httpcore",
+  "httpx-sse",
+  "anyio",
+  "xlsxwriter",
+  "pandas",
+  "numpy",
+  "python-dateutil",
+  "tenacity",
+  "jinja2",
+  "jq",
+  "rich",
+  "typer",
+  "click",
+  "exa_py",
+  "newspaper4k",
+  "lxml_html_clean",
+  "youtube-transcript-api", 
+  "mcp-server-git"
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy", 
+  "ruff",
+  "pytest-benchmark",
+  "ipython",
+  "ipdb"
+]
+
+test = [
+  "pytest",
+  "pytest-asyncio", 
+  "pytest-cov",
+  "pytest-mock",
+  "pytest-xdist",
+  "responses",
+  "factory-boy",
+  "freezegun"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+
+[tool.ruff]
+line-length = 120
+exclude = [".venv*"]
+[tool.ruff.lint.per-file-ignores]
+# Ignore `F401` (import violations) in all `__init__.py` files
+"__init__.py" = ["F401", "F403"]
+
+[tool.mypy]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+exclude = [".venv*"]
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "setuptools.*", "nest_asyncio.*", "agno.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "unit: Unit tests",
+  "integration: Integration tests", 
+  "performance: Performance tests"
+]
+asyncio_mode = "auto"
+
+[tool.uv.pip]
+no-annotate = true

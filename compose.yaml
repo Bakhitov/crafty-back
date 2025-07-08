@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-agent-api}:${IMAGE_TAG:-latest}
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # AGNO_MONITOR: "True"
+      # AGNO_API_KEY: ${AGNO_API_KEY}
+      DB_URL: ${DB_URL:-postgresql://postgres:Ginifi51!@db.wyehpfzafbjfvyjzgjss.supabase.co:5432/postgres}
+      DB_HOST: ${DB_HOST:-db.wyehpfzafbjfvyjzgjss.supabase.co}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASS: ${DB_PASSWORD:-Ginifi51!}
+      DB_DATABASE: ${DB_NAME:-postgres}
+      DB_SCHEME: ${DB_SCHEME:-ai}
+      WAIT_FOR_DB: "False"
+      PRINT_ENV_ON_LOAD: "True"
+    networks:
+      - agent-api
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  agent-api:
