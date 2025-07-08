@@ -30,11 +30,49 @@ dependencies = [
   "elevenlabs",
   "pillow",
   "groq",
-  "requests"
+  "requests",
+  "uvicorn[standard]",
+  "starlette",
+  "pydantic-settings",
+  "httpcore",
+  "httpx-sse",
+  "anyio",
+  "xlsxwriter",
+  "pandas",
+  "numpy",
+  "python-dateutil",
+  "tenacity",
+  "jinja2",
+  "jq",
+  "rich",
+  "typer",
+  "click",
+  "exa_py",
+  "newspaper4k",
+  "lxml_html_clean",
+  "youtube-transcript-api", 
+  "mcp-server-git"
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "ruff"]
+dev = [
+  "mypy", 
+  "ruff",
+  "pytest-benchmark",
+  "ipython",
+  "ipdb"
+]
+
+test = [
+  "pytest",
+  "pytest-asyncio", 
+  "pytest-cov",
+  "pytest-mock",
+  "pytest-xdist",
+  "responses",
+  "factory-boy",
+  "freezegun"
+]
 
 [build-system]
 requires = ["setuptools"]
@@ -59,6 +97,15 @@ exclude = [".venv*"]
 [[tool.mypy.overrides]]
 module = ["pgvector.*", "setuptools.*", "nest_asyncio.*", "agno.*"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "unit: Unit tests",
+  "integration: Integration tests", 
+  "performance: Performance tests"
+]
+asyncio_mode = "auto"
 
 [tool.uv.pip]
 no-annotate = true

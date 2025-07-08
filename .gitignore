@@ -15,7 +15,9 @@
 # Machine specific
 .idea
 .vscode
-
+.cursor
+cookbook
+example
 # Ignore .env files
 .env
 .envrc

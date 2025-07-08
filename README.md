@@ -207,3 +207,240 @@ The general process to run in production is:
   * This application requires an external PostgreSQL database. For production, use a managed database service provided by your cloud provider (e.g., AWS RDS, Google Cloud SQL, Azure Database for PostgreSQL, or Supabase) for better reliability, scalability, and manageability.
   * Ensure your deployed application is configured with the correct database connection URL via the `DB_URL` environment variable. You can also set individual database parameters (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, etc.) if preferred.
   * The database schema should be set to `ai` via the `DB_SCHEME` environment variable.
+
+# Agent API
+
+Агентский API для работы с различными типами агентов ИИ, построенный на основе фреймворка Agno.
+
+## Возможности
+
+- 🤖 Множественные специализированные агенты (Demo, Agno Assist, Finance)
+- 💬 Поддержка потокового и обычного режимов ответов
+- 📁 **Поддержка загрузки файлов** (изображения, аудио, видео, документы)
+- 🧠 Персистентная память и история сессий
+- 🔍 Интеграция с базами знаний
+- 🎮 Веб-интерфейс для тестирования (Playground)
+- 🐳 Контейнеризация с Docker
+
+## Быстрый старт
+
+### Установка и запуск
+
+1. Клонируйте репозиторий:
+```bash
+git clone <repository-url>
+cd agent-api
+```
+
+2. Создайте файл `.env` на основе `example.env`
+3. Запустите с помощью Docker:
+```bash
+docker compose up -d --build
+```
+
+API будет доступен по адресу `http://localhost:8000`
+
+## Использование API
+
+### Базовые запросы (только текст)
+
+```bash
+# Простой текстовый запрос
+curl -X POST "http://localhost:8000/v1/agents/demo_agent/runs/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Привет! Как дела?",
+    "stream": false,
+    "user_id": "user123",
+    "session_id": "session456"
+  }'
+```
+
+### Запросы с файлами
+
+#### Загрузка изображения
+```bash
+curl -X POST "http://localhost:8000/v1/agents/demo_agent/runs" \
+  -F "message=Опиши что изображено на картинке" \
+  -F "stream=false" \
+  -F "user_id=user123" \
+  -F "files=@path/to/image.jpg"
+```
+
+#### Загрузка документа
+```bash
+curl -X POST "http://localhost:8000/v1/agents/agno_assist/runs" \
+  -F "message=Проанализируй этот документ" \
+  -F "stream=false" \
+  -F "files=@document.pdf"
+```
+
+#### Множественные файлы
+```bash
+curl -X POST "http://localhost:8000/v1/agents/demo_agent/runs" \
+  -F "message=Обработай эти файлы" \
+  -F "stream=true" \
+  -F "files=@image1.jpg" \
+  -F "files=@document.pdf" \
+  -F "files=@audio.mp3"
+```
+
+### Поддерживаемые типы файлов
+
+#### Изображения
+- PNG, JPEG, JPG, WebP
+- Автоматическое кодирование в base64
+- Передача агенту для анализа
+
+#### Аудио
+- WAV, MP3, MPEG
+- Поддержка транскрипции (зависит от агента)
+
+#### Видео  
+- MP4, WebM, MOV, AVI, FLV, WMV, 3GPP
+- Обработка видеоконтента
+
+#### Документы
+- **PDF** - извлечение текста и изображений
+- **CSV** - обработка табличных данных  
+- **DOCX** - извлечение текста из Word документов
+- **TXT** - обработка простого текста
+- **JSON** - парсинг структурированных данных
+
+### Поведение с базами знаний
+
+Если у агента есть база знаний (например, `agno_assist`):
+- Документы автоматически загружаются в базу знаний
+- Агент может искать информацию из загруженных документов
+- Контент становится доступен для последующих запросов
+
+Если базы знаний нет:
+- Файлы передаются агенту как прямой ввод
+- Обработка зависит от возможностей конкретного агента
+
+### Примеры на Python
+
+```python
+import requests
+
+# Простой текстовый запрос
+response = requests.post(
+    "http://localhost:8000/v1/agents/demo_agent/runs/json",
+    json={
+        "message": "Привет!",
+        "stream": False,
+        "user_id": "user123"
+    }
+)
+
+# Запрос с изображением
+with open("image.jpg", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/v1/agents/demo_agent/runs",
+        data={
+            "message": "Что на картинке?",
+            "stream": "false",
+            "user_id": "user123"
+        },
+        files={"files": f}
+    )
+
+# Потоковый запрос с документом
+with open("document.pdf", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/v1/agents/agno_assist/runs",
+        data={
+            "message": "Summarize this document",
+            "stream": "true"
+        },
+        files={"files": f},
+        stream=True
+    )
+    
+    for line in response.iter_lines():
+        if line:
+            print(line.decode('utf-8'))
+```
+
+### Примеры на JavaScript
+
+```javascript
+// Запрос с файлом
+const formData = new FormData();
+formData.append('message', 'Analyze this image');
+formData.append('stream', 'false');
+formData.append('files', fileInput.files[0]);
+
+const response = await fetch('/v1/agents/demo_agent/runs', {
+    method: 'POST',
+    body: formData
+});
+
+const result = await response.text();
+console.log(result);
+
+// Потоковый запрос
+const streamResponse = await fetch('/v1/agents/demo_agent/runs', {
+    method: 'POST',
+    body: formData
+});
+
+const reader = streamResponse.body.getReader();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    const chunk = new TextDecoder().decode(value);
+    console.log(chunk);
+}
+```
+
+## Доступные агенты
+
+### Demo Agent (`demo_agent`)
+- Универсальный демонстрационный агент
+- Поддержка русского языка
+- Инструменты: DuckDuckGo поиск
+- Персистентная память
+
+### Agno Assist (`agno_assist`)  
+- Специалист по фреймворку Agno
+- База знаний из документации Agno
+- Помощь с кодом и примерами
+- Поддержка загрузки документов в базу знаний
+
+### Finance Agent (`finance_agent`)
+- Финансовый аналитик "FinMaster"
+- Инструменты: YFinance, DuckDuckGo
+- Анализ акций и рекомендации
+- Профессиональные отчеты
+
+## API Endpoints
+
+- `GET /v1/agents` - Список доступных агентов
+- `POST /v1/agents/{agent_id}/runs` - Запуск агента с поддержкой файлов
+- `POST /v1/agents/{agent_id}/runs/json` - Запуск агента только с текстом
+- `POST /v1/agents/{agent_id}/knowledge/load` - Загрузка базы знаний
+- `GET /v1/health` - Проверка состояния API
+- `/v1/playground/*` - Веб-интерфейс для тестирования
+
+## Разработка
+
+### Структура проекта
+```
+agent-api/
+├── agents/          # Определения агентов
+├── api/            # FastAPI приложение
+├── db/             # Настройки базы данных
+└── scripts/        # Утилиты разработки
+```
+
+### Добавление нового агента
+
+1. Создайте файл в `agents/your_agent.py`
+2. Добавьте тип в `agents/selector.py`
+3. Обновите селектор в `get_agent()`
+
+## Лицензия
+
+Этот проект распространяется под лицензией MIT. См. файл [LICENSE](LICENSE) для подробностей.

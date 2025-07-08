@@ -1,8 +1,8 @@
 from agno.playground import Playground
 
 from agents.agno_assist import get_agno_assist
-from agents.finance_agent import get_finance_agent
 from agents.demo_agent import get_demo_agent
+from agents.finance_agent import get_finance_agent
 
 ######################################################
 ## Routes for the Playground Interface
