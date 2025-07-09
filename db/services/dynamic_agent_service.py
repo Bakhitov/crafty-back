@@ -560,7 +560,7 @@ class DynamicAgentService:
             agent_params.update(settings_dict)
         
         # === ПЕРЕОПРЕДЕЛЕНИЯ ===
-        excluded_params = {'model_override', 'files', 'stream', 'user_id', 'session_id'}
+        excluded_params = {'model_override', 'files', 'stream', 'user_id', 'session_id', 'stop_after_tool_call'}
         overrides = {k: v for k, v in kwargs.items() if v is not None and k not in excluded_params}
         agent_params.update(overrides)
         
