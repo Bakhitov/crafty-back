@@ -367,6 +367,10 @@ class DynamicAgentService:
             
             if 'session_id' in kwargs and kwargs['session_id']:
                 run_kwargs['session_id'] = kwargs['session_id']
+
+            # Передаём флаг остановки после вызова инструмента, если указан
+            if 'stop_after_tool_call' in kwargs:
+                run_kwargs['stop_after_tool_call'] = kwargs['stop_after_tool_call']
             
             if kwargs.get('stream', False):
                 # Потоковый режим
@@ -734,20 +738,21 @@ class DynamicAgentService:
         
         tool_instances = []
         
+        import anyio
+        from db.services.mcp_service import mcp_service
+
         for server_id in server_ids:
             try:
-                # ✅ Используем ПРАВИЛЬНЫЙ асинхронный метод MCPService
-                from db.services.mcp_service import mcp_service
-                
-                # Создаем и инициализируем MCP инструмент асинхронно
-                mcp_tools = await mcp_service.create_tool_instance_async(server_id)
-                
+                # Пытаемся создать MCP-инструмент, но не более 3 сек, иначе пропускаем
+                async with anyio.fail_after(3):
+                    mcp_tools = await mcp_service.create_tool_instance_async(server_id)
                 if mcp_tools:
                     tool_instances.append(mcp_tools)
                     print(f"✅ Создан MCP инструмент (async): {server_id}")
-                
-            except Exception as e:
-                print(f"❌ Ошибка создания MCP инструмента {server_id}: {e}")
+                else:
+                    print(f"⚠️ MCP инструмент '{server_id}' пропущен (не удалось инициализировать)")
+            except (anyio.exceptions.TimeoutError, Exception) as e:
+                print(f"⚠️ MCP '{server_id}' отключён: {e}")
                 continue
         
         return tool_instances

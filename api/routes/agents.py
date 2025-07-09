@@ -3,8 +3,8 @@ from io import BytesIO
 from logging import getLogger
 from typing import AsyncGenerator, List, Optional, Dict, Any, Union
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status, Query
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
 from db.services.dynamic_agent_service import dynamic_agent_service
@@ -14,6 +14,12 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+
+# Agno helpers for sessions
+from agno.app.playground.operator import get_session_title
+from agno.app.playground.schemas import AgentSessionsResponse, AgentRenameRequest
+from agno.storage.session.agent import AgentSession
+from agno.app.playground.schemas import MemoryResponse  # Добавлено для ответа воспоминаний
 
 logger = getLogger(__name__)
 
@@ -402,6 +408,7 @@ async def create_agent_run(
     user_id: Optional[str] = Form(None),
     session_id: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
+    stop_after_tool_call: bool = Form(False),
 ):
     """
     Отправляет сообщение конкретному агенту и возвращает ответ.
@@ -424,45 +431,46 @@ async def create_agent_run(
 
     try:
         # Выполняем агента напрямую через сервис
-        response = await dynamic_agent_service.run_agent(
+        agent_response = await dynamic_agent_service.run_agent(
             agent_id=agent_id,
             message=message,
             user_id=user_id,
             session_id=session_id,
             stream=stream,
             model_override=model.value if model != Model.gpt_4_1 else None,
-            files=files or []
+            files=files or [],
+            stop_after_tool_call=stop_after_tool_call,
         )
         
         # Обрабатываем ответ
-        if isinstance(response, str):
+        if isinstance(agent_response, str):
             # Синхронный ответ (ошибка или простой текст) - старый формат
-            if response.startswith("Ошибка") or response.startswith("Агент с ID"):
+            if agent_response.startswith("Ошибка") or agent_response.startswith("Агент с ID"):
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=response
+                    detail=agent_response
                 )
             
             if stream:
                 # Для синхронного ответа в потоковом режиме
                 async def single_response():
-                    yield f"data: {response}\n\n"
+                    yield f"data: {agent_response}\n\n"
                 return StreamingResponse(single_response(), media_type="text/event-stream")
             else:
-                return response
-        elif isinstance(response, dict):
+                return agent_response
+        elif isinstance(agent_response, dict):
             # Новый формат ответа с RunResponse объектом
             if stream:
                 # Для структурированного ответа в потоковом режиме
                 async def single_dict_response():
-                    yield f"data: {json.dumps(response)}\n\n"
+                    yield f"data: {json.dumps(agent_response)}\n\n"
                 return StreamingResponse(single_dict_response(), media_type="text/event-stream")
             else:
-                return response
+                return agent_response
         else:
             # Потоковый ответ (AsyncGenerator)
             return StreamingResponse(
-                chat_response_streamer(response),
+                chat_response_streamer(agent_response),
                 media_type="text/event-stream"
             )
 
@@ -795,3 +803,169 @@ async def cleanup_expired_cache():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cleanup cache"
         )
+
+# === Работа с сессиями (эквивалент Agno Playground) ===
+
+
+@agents_router.get("/{agent_id}/sessions", response_model=List[AgentSessionsResponse])
+async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    """Получить список всех сессий агента"""
+    try:
+        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        if agno_agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        if agno_agent.storage is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent does not have storage enabled")
+
+        sessions: List[AgentSession] = agno_agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
+        result: List[AgentSessionsResponse] = []
+        for session in sessions:
+            title = get_session_title(session)
+            result.append(
+                AgentSessionsResponse(
+                    title=title,
+                    session_id=session.session_id,
+                    session_name=session.session_data.get("session_name") if session.session_data else None,
+                    created_at=session.created_at,
+                )
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting sessions for agent {agent_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve sessions")
+
+
+@agents_router.get("/{agent_id}/sessions/{session_id}")
+async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    """Получить конкретную сессию агента"""
+    try:
+        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        if agno_agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        if agno_agent.storage is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent does not have storage enabled")
+
+        session: Optional[AgentSession] = agno_agent.storage.read(session_id, user_id)  # type: ignore
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+        session_dict = session.to_dict()
+        if session.memory is not None:
+            runs = session.memory.get("runs")
+            if runs is not None and len(runs) > 0:
+                first_run = runs[0]
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
+                    session_dict["runs"] = []
+                    for run in runs:
+                        first_user_message = next(
+                            (
+                                msg
+                                for msg in run.get("messages", [])
+                                if msg.get("role") == "user" and not msg.get("from_history", False)
+                            ),
+                            None,
+                        )
+                        run.pop("memory", None)
+                        session_dict["runs"].append({"message": first_user_message, "response": run})
+
+        return session_dict
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting session {session_id} for agent {agent_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve session")
+
+
+@agents_router.post("/{agent_id}/sessions/{session_id}/rename")
+async def rename_agent_session(agent_id: str, session_id: str, body: AgentRenameRequest):
+    """Переименовать сессию агента"""
+    try:
+        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        if agno_agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        if agno_agent.storage is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent does not have storage enabled")
+
+        sessions: List[AgentSession] = agno_agent.storage.get_all_sessions(user_id=body.user_id)  # type: ignore
+        for session in sessions:
+            if session.session_id == session_id:
+                agno_agent.rename_session(body.name, session_id=session_id)
+                return JSONResponse(content={"message": f"Session {session.session_id} renamed"})
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error renaming session {session_id} for agent {agent_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to rename session")
+
+
+@agents_router.delete("/{agent_id}/sessions/{session_id}")
+async def delete_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    """Удалить сессию агента"""
+    try:
+        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        if agno_agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        if agno_agent.storage is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent does not have storage enabled")
+
+        sessions: List[AgentSession] = agno_agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
+        for session in sessions:
+            if session.session_id == session_id:
+                agno_agent.delete_session(session_id)
+                return JSONResponse(content={"message": f"Session {session_id} deleted"})
+
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting session {session_id} for agent {agent_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete session")
+
+
+@agents_router.get("/{agent_id}/memories", response_model=List[MemoryResponse])
+async def get_agent_memories(agent_id: str, user_id: str = Query(..., min_length=1)):
+    """Получить воспоминания пользователя для указанного агента напрямую через Agno.
+
+    Args:
+        agent_id: ID агента
+        user_id: ID пользователя, для которого запрашиваются воспоминания
+
+    Returns:
+        List[MemoryResponse]: Список воспоминаний пользователя
+    """
+    try:
+        # Получаем инстанс агента из Agno
+        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        if agno_agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+        # Проверяем наличие памяти у агента
+        if agno_agent.memory is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent does not have memory enabled")
+
+        # Универсально получаем воспоминания, если метод поддерживается
+        memories = []
+        if hasattr(agno_agent.memory, "get_user_memories"):
+            memories = agno_agent.memory.get_user_memories(user_id=user_id)  # type: ignore
+        else:
+            # Если метод недоступен – возвращаем пустой список
+            memories = []
+
+        # Формируем ответ
+        return [
+            MemoryResponse(memory=m.memory, topics=getattr(m, "topics", None), last_updated=getattr(m, "last_updated", None))  # type: ignore
+            for m in memories
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting memories for agent {agent_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve agent memories")
