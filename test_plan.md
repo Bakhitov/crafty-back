@@ -1,19 +1,6 @@
 # 🧪 ОБНОВЛЕННЫЙ Полный тест-план для динамических агентов Agno
 
-## 🎯 СТАТУС: ✅ СИСТЕМА ГОТОВА К ПРОДАКШН - ОБНОВЛЕН 2025-01-28 (CONTINUE ENDPOINT)
 
-### 📊 Архитектурный анализ и соответствие Agno:
-- **✅ НАТИВНАЯ ИНТЕГРАЦИЯ**: Полное соответствие Agno Agent параметрам (100+ параметров)
-- **✅ PYDANTIC ВАЛИДАЦИЯ**: Все конфигурации валидируются через Pydantic модели
-- **✅ ДИНАМИЧЕСКАЯ ПРИРОДА**: Агенты создаются/изменяются через API в реальном времени
-- **✅ ИЗОЛЯЦИЯ AGNO**: Фреймворк изолирован в .venv, может обновляться независимо
-- **✅ ЛЕГКОВЕСНОСТЬ**: Минимальные абстракции, прямое использование Agno классов
-- **✅ COOKBOOK СОВМЕСТИМОСТЬ**: Все примеры из cookbook работают с нашими моделями
-- **✅ КЭШИРОВАНИЕ**: TTL кэш для агентов (5 мин по умолчанию) с инвалидацией
-- **✅ КАСТОМНЫЕ ИНСТРУМЕНТЫ**: Python код инструменты через API
-- **✅ MCP ИНТЕГРАЦИЯ**: Model Context Protocol серверы
-- **✅ МУЛЬТИМОДАЛЬНОСТЬ**: Поддержка изображений, аудио, видео, документов
-- **✅ CONTINUE ENDPOINT**: Полная поддержка продолжения выполнения агентов
 
 ### 🔍 Детальный анализ соответствия с Agno Agent:
 - **ModelConfig**: ✅ Покрывает OpenAI модели (50+ параметров)
@@ -25,30 +12,79 @@
 - **TeamConfig**: ✅ Командная работа агентов с координацией
 - **AgentSettings**: ✅ Все 60+ параметров Agent класса
 
-### 🆕 НОВЫЕ ВОЗМОЖНОСТИ (обновление от 2025-01-28):
-- **🔧 Кастомные Python инструменты**: Создание инструментов через код
-- **🌐 MCP серверы**: Интеграция с Model Context Protocol
-- **⚡ Система кэширования**: TTL кэш с автоинвалидацией
-- **📁 Файловая поддержка**: Полная мультимодальная загрузка
-- **🔄 Стриминг**: Server-Sent Events для всех операций
-- **🏗️ Изоляция архитектуры**: Четкое разделение static/dynamic агентов
-- **✨ CONTINUE ENDPOINT**: Продолжение выполнения агентов с обновленными инструментами
+## 🆕 Конфигурационная матрица тестов (февраль 2025)
 
-### 🎯 ПОСЛЕДНИЕ ИЗМЕНЕНИЯ (28.01.2025):
-- **🗑️ Удален дублирующий endpoint** `/runs/json` из системы
-- **✅ Реализован continue endpoint** `POST /v1/agents/{agent_id}/runs/{run_id}/continue`
-- **🔧 Исправлена ошибка** с `table_name` в StorageConfig
-- **📊 Протестирована совместимость** с Agno playground
-- **🚀 Обновлен DynamicAgentService** с методом `get_agent_instance()`
+> Цель: охватить максимум вариантов конфигураций из `MAIN_CONFIGS.md`, не увеличивая существенно количество HTTP-запросов. Мы создаём **три параметризованных агента**, каждый из которых комбинирует несколько блоков конфигурации.
 
----
+### 🧩 Матрица покрываемых параметров
+
+| Сценарий (agent_id)          | ModelConfig (провайдер) | ToolsConfig                               | MemoryConfig                | KnowledgeConfig (RAG)           | ReasoningConfig      | TeamConfig      | StorageConfig        |
+|------------------------------|-------------------------|-------------------------------------------|-----------------------------|---------------------------------|----------------------|-----------------|----------------------|
+| `basic_matrix_agent`         | GPT-3.5 turbo / Claude-3| Статические **и** динамические           | —                           | —                               | —                    | —               | —                    |
+| `memory_reasoning_agent`     | GPT-4o                  | Статические + кастомные                   | Полная (agentic + user)     | —                               | Включён (min 2-max 8)| —               | Events ON            |
+| `team_knowledge_agent`       | GPT-4 / Gemini 1.5      | MCP + статические                         | Фильтр importance=high      | RAG + custom retriever          | —                    | Coordinate      | —                    |
+
+### 📂 Структура файлов конфигурации
+В каталоге `tests/config_matrix/` располагаются три JSON-файла:
+
+```
+config_basic.json
+config_memory_reasoning.json
+config_team_knowledge.json
+```
+Каждый файл агрегирует необходимые поля из соответствующих секций `MAIN_CONFIGS.md` (Model/Tools/Memory/…​) и может быть обновлён без изменения тест-плана.
+
+### 🔄 Массовое создание агентов
+
+```bash
+declare -A MATRIX=(
+  [basic_matrix_agent]="config_basic.json"
+  [memory_reasoning_agent]="config_memory_reasoning.json"
+  [team_knowledge_agent]="config_team_knowledge.json"
+)
+
+for AGENT_ID in "${!MATRIX[@]}"; do
+  curl -X POST "${ENDPOINT}/agents" \
+       -H "Content-Type: application/json" \
+       -d @"tests/config_matrix/${MATRIX[$AGENT_ID]}" | jq '.agent_id'
+done
+```
+
+### ✅ Универсальный набор проверок
+Один и тот же набор запросов выполняется для каждого агента из матрицы, что существенно сокращает общее количество тестовых блоков.
+
+```bash
+for AGENT_ID in "${!MATRIX[@]}"; do
+  # 1️⃣ Проверка базового ответа и инструментов
+  curl -X POST "${ENDPOINT}/agents/${AGENT_ID}/runs" \
+       -H "Content-Type: application/json" \
+       -d '{"message":"Опиши кратко свою конфигурацию и вычисли 2+2."}' | jq
+
+  # 2️⃣ Проверка RAG или памяти (если сконфигурировано)
+  curl -X POST "${ENDPOINT}/agents/${AGENT_ID}/runs" \
+       -H "Content-Type: application/json" \
+       -d '{"message":"Какая столица Франции?"}' | jq
+
+done
+```
+
+*Таким образом три сценария покрывают:*
+- 4 разных провайдера моделей
+- 4 типа инструментов (статические, динамические, кастомные, MCP)
+- 2 режима MemoryConfig
+- RAG с кастомным retriever
+- Reasoning-agent с разным числом шагов
+- Coordinate-Team режим
+- Event-storage включён / отключён
+
+> При добавлении новых параметров в `MAIN_CONFIGS.md` достаточно создать новый JSON-файл в каталоге `tests/config_matrix/` и добавить его в ассоциативный массив `MATRIX`.
 
 ## 🚀 Подготовка к тестированию
 
 ### Запуск сервера
 ```bash
 # Запуск в Docker
-docker compose up -d --build
+docker compose up -d
 
 # Ожидание запуска (сервер медленно стартует)
 sleep 30
@@ -685,7 +721,8 @@ curl -X POST "${ENDPOINT}/agents" \
     "storage_config": {
       "enabled": true,
       "storage_type": "postgres",
-      "db_url": "postgresql://postgres:password@host:5432/database"
+      "store_events": false,
+      "db_url": "postgresql://postgres:password@host:5432/postgres"
     }
   }' | jq
 ```
@@ -1261,3 +1298,206 @@ curl -X POST "${ENDPOINT}/agents/agent_id/runs/${RUN_ID}/continue" \
 5. **✅ Соблюдены все принципы проекта**
 
 **🚀 Проект готов к продолжению разработки с новым continue функционалом!** 
+
+---
+
+## 🆕 Расширенное покрытие конфигураций и файлов (февраль 2025)
+
+### 1. Тестирование всех типов файлов (мультимодальный ввод)
+```bash
+# Создать универсального мультимодального агента
+curl -X POST "${ENDPOINT}/agents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Universal File Agent",
+    "agent_id": "universal_file_agent",
+    "description": "Агент для проверки всех поддерживаемых типов файлов",
+    "instructions": "Анализируй загруженные файлы и отвечай согласно их содержимому.",
+    "model_configuration": {"id": "gpt-4.1", "temperature": 0.5, "max_tokens": 4000, "add_images_to_message_content": true},
+    "knowledge_config": {"update_knowledge": true, "add_references": true},
+    "settings": {"stream": false}
+  }' | jq
+
+# Проверяем PNG изображение
+curl -X POST "${ENDPOINT}/agents/universal_file_agent/runs" \
+  -F "message=Опиши изображение" \
+  -F "files=@tests/assets/sample.png" | jq
+
+# Проверяем PDF документ
+curl -X POST "${ENDPOINT}/agents/universal_file_agent/runs" \
+  -F "message=Сделай краткое резюме PDF" \
+  -F "files=@tests/assets/sample.pdf" | jq
+
+# Проверяем DOCX документ
+curl -X POST "${ENDPOINT}/agents/universal_file_agent/runs" \
+  -F "message=Извлеки ключевые тезисы из DOCX" \
+  -F "files=@tests/assets/sample.docx" | jq
+
+# Проверяем аудио (WAV)
+curl -X POST "${ENDPOINT}/agents/universal_file_agent/runs" \
+  -F "message=Транскрибируй аудио" \
+  -F "files=@tests/assets/sample.wav" | jq
+
+# Проверяем CSV
+curl -X POST "${ENDPOINT}/agents/universal_file_agent/runs" \
+  -F "message=Подсчитай среднее значение колонки price" \
+  -F "files=@tests/assets/sample.csv" | jq
+```
+
+### 2. Подтверждение корректности конфигураций агента через логи
+```bash
+# Запуск агента и сбор логов
+RUN_LOG=$(curl -s -X POST "${ENDPOINT}/agents/basic_matrix_agent/runs" -F "message=Покажи конфигурацию" -F "stream=false")
+RUN_ID=$(echo $RUN_LOG | jq -r '.run_id')
+
+# Проверяем, что ответ содержит ожидаемые поля из конфигурации
+echo $RUN_LOG | jq -e '.content | test("temperature: 0.7")'
+
+# Анализируем серверные логи для убедительности
+AGENT_CONTAINER=$(docker compose ps -q api)
+docker logs $AGENT_CONTAINER 2>&1 | grep $RUN_ID | grep "Model id: gpt-3.5"  # пример проверки
+```
+
+### 3. Полное покрытие инструментов (static / dynamic / custom / MCP)
+```bash
+# Агент со всеми видами инструментов
+curl -X POST "${ENDPOINT}/agents" -H "Content-Type: application/json" -d '{
+  "name": "All Tools Agent",
+  "agent_id": "all_tools_agent",
+  "description": "Проверка всех типов инструментов",
+  "model_configuration": {"id": "gpt-4.1", "temperature": 0.4},
+  "tools_config": {
+    "tools": [{"type": "CalculatorTools"}],
+    "dynamic_tools": ["web_search_001"],
+    "custom_tools": ["weather_tool"],
+    "mcp_servers": ["filesystem_mcp"],
+    "show_tool_calls": true
+  }
+}' | jq
+
+# Проверяем вызов каждого типа инструмента
+curl -X POST "${ENDPOINT}/agents/all_tools_agent/runs" -F "message=Посчитай 2+2 и найди новости про AI. Какая погода в Москве? Покажи файлы /tmp" -F "stream=false" | jq
+```
+
+### 4. Проверка всех REST эндпоинтов v1
+| Категория | Метод | URI | Проверка |
+|-----------|-------|-----|----------|
+| AGENTS | GET | /v1/agents | 200 + непустой JSON |
+|  | GET | /v1/agents/detailed | наличие "model_configuration" |
+|  | POST | /v1/agents | 201 + возвращён id |
+|  | PUT | /v1/agents/{agent_id} | 200 + "updated_at" |
+|  | DELETE | /v1/agents/{agent_id} | 204 |
+| RUNS | POST | /v1/agents/{agent_id}/runs | 200/206 + run_id |
+|  | POST | /v1/agents/{agent_id}/runs/{run_id}/continue | корректное продолжение |
+| TOOLS | GET | /v1/tools | 200 |
+|  | POST | /v1/tools/custom | создание кастомного инструмента |
+| CACHE | GET | /v1/agents/cache/stats | 200 |
+| META | GET | /v1/agents/meta/runtimes | включает "python" |
+
+### 5. Конфиги Storage / Memory / Knowledge / Context / State / Reasoning / History
+```bash
+curl -X POST "${ENDPOINT}/agents" -H "Content-Type: application/json" -d '{
+  "name": "Full Config Agent",
+  "agent_id": "full_config_agent",
+  "description": "Агент с максимальной конфигурацией для проверки всех подсистем",
+  "model_configuration": {"id": "gpt-4o", "temperature": 0.3},
+  "memory_config": {"memory_type": "postgres", "enable_agentic_memory": true},
+  "knowledge_config": {"search_knowledge": true, "add_references": true},
+  "storage_config": {"enabled": true, "storage_type": "postgres", "db_url": "${DB_URL}"},
+  "reasoning_config": {"reasoning": true, "reasoning_min_steps": 2, "reasoning_max_steps": 5},
+  "settings": {"add_history_to_messages": true, "num_history_runs": 3, "session_state": {"stage": "integration_test"}}
+}' | jq
+
+# Проверяем что:
+# 1️⃣ В ответе присутствуют ссылки (knowledge)
+# 2️⃣ В логе появился блок reasoning со 2-5 шагами
+# 3️⃣ Данные памяти сохранены в таблице ai.agent_memory (SQL check)
+```
+
+### 6. Автоматизированная проверка логов
+```bash
+# Системный скрипт пример
+AGENT_CONTAINER=$(docker compose ps -q api)
+LOG_GREP() { docker logs $AGENT_CONTAINER 2>&1 | grep -E "$1"; }
+
+# Убедиться, что reasoning отработал 3 шага
+LOG_GREP "🤖 ШАГ 3" | head -n1
+
+# Убедиться, что инструмент CalculatorTools был вызван
+LOG_GREP "Создан статический инструмент: CalculatorTools"
+
+# Проверить сохранение памяти
+psql "$DB_URL" -c "SELECT count(*) FROM ai.agent_memory WHERE content LIKE '%Senior DevOps%'" | grep -E "^[ ]+[1-9][0-9]*"
+```
+
+> Эти сценарии дополняют ранее существующие и обеспечивают ПОЛНОЕ покрытие всех конфигураций, файлов, инструментов и эндпоинтов, а также тщательную валидацию ответов через логи и базу данных. 
+
+---
+
+## 📝 Отчёт о текущем статусе тестирования (2025-07-09)
+
+### ✅ Уже успешно протестировано
+1. **Запуск Docker-сервера** – контейнер `api` стартует, эндпоинт `/health` возвращает `{"status":"success"}`.
+2. **Базовые REST-эндпоинты**
+   • `GET /v1/agents`, `GET /v1/agents/detailed` – список и полные конфиги приходят.
+   • `GET /v1/tools` – отображает статические, dynamic и custom инструменты.
+   • `GET /v1/agents/cache/stats`, `GET /v1/agents/meta/runtimes` – 200 OK.
+3. **CRUD агентов**
+   • `POST /v1/agents` – создание работает (пример `temp_agent`).
+   • `PUT /v1/agents/{id}` – обновление `is_active` → `false` работает.
+   • `DELETE /v1/agents/{id}` возвращает 404, если агент был создан через редирект 307 (см. «Проблемы»).
+4. **/runs эндпоинт**
+   • `basic_matrix_agent` и `memory_reasoning_agent` корректно отвечают; выполнены tool-calls `DuckDuckGoTools`, `CalculatorTools`.
+   • Memory агент запомнил факт «Алексей — Senior DevOps» и вернул его при запросе.
+5. **Continue эндпоинт**
+   • Некорректный `run_id` → контролируемая ошибка 500 «Updated tools are required». Обработка ошибок подтверждена.
+6. **Кэш** – повторный запрос агента быстрее; статистика TTL отображается.
+7. **Логи** – фиксируем создание инструментов, кеш-хиты, Deprecation warnings (UTC, Pydantic v2).
++8. **Continue эндпоинт (happy path)** – подтверждена успешная продолженная сессия (`continue_full_agent`), `run_id` и `session_id` сохранены.
+
+### ⚠️ Обнаруженные проблемы / баги
+1. **DELETE /v1/agents/{id}** возвращает 404, если агент был создан по адресу без `/` и получил 307 Redirect. Нужно использовать точный URI (`/v1/agents/…`) или обработать редирект.
+2. **universal_full_agent**
+   • `filesystem_mcp` падает с таймаутом 5 сек (CancelledError).
+   • PNG-файл через модель GPT-4 вызывает ошибку `image_url` – нужен GPT-4o.
+3. **Continue (позитивный сценарий)** – ещё не подтверждена успешная продолженная сессия с валидным `tools` JSON.
+4. **Deprecation Warnings** – `datetime.utcnow()` и `pydantic.BaseModel.dict()` требуют миграции на timezone-aware datetime и `model_dump()`.
+
+### 🔬 Что осталось протестировать
+1. **RAG / KnowledgeConfig** – поиск по PGVector, порог `similarity_threshold`.
+2. **StorageConfig** – персистентность `session_state` и `store_events`.
+3. **Custom Tools** – создать `weather_tool`, вызвать из агента.
+4. **Dynamic Tools** – `web_search_001`, проверить lazy loading.
+5. **MCP servers** – `filesystem_mcp` после увеличения `timeout`; HTTP MCP.
+6. **Все типы файлов** – PNG, PDF, DOCX, WAV, CSV через `universal_file_agent`.
+7. **Streaming SSE** – `/runs` и `/continue` с `Accept: text/event-stream`.
+8. **ReasoningConfig (advanced)** – агент с `reasoning_min_steps=3`, `stream_reasoning=true`.
+9. **TeamConfig** – режим `coordinate` с несколькими членами.
+10. **Structured Outputs** – агент с принудительной JSON-схемой.
+11. **Load / Stress tests** – параллельное создание 8+ агентов, замер времени.
+12. **Cache Refresh / Clear** – POST `/v1/agents/cache/refresh`, `/clear`.
+13. **Continue endpoint – happy path** – отправка валидного списка `tools` и контроль сохранения `run_id`.
+14. **DB проверки** – запись памяти в таблицу `ai.agent_memory`, событие в `store_events`.
+15. **Deprecation fixes** – убедиться, что предупреждения устранены после миграции.
+
+> После прохождения оставшихся пунктов тест-план будет закрыт на 100 %. Каждый завершённый пункт необходимо отметить галочкой и приложить короткий лог/пример ответа API.
+
+### ♻️ Обновление 2025-07-09 (v2)
+
+| Изменение | Статус |
+|-----------|--------|
+| Алиасы `/v1/agents/cache/clear` и `/v1/agents/{agent_id}/cache/clear` | ✅ Эндпоинты добавлены, возвращают 200 OK |
+| Падение `weather_tool` (ImportError) | ✅ Исправлено, вызовы работают |
+| Continue-endpoint (happy path) | ✅ Подтверждён повторно |
+| OpenAPI содержит новые path | ✅ `/cache/clear` виден |
+
+⚠️ Остаются задачи:
+1. Проверить **MemoryConfig** — требуется агент с `enable_agentic_memory=true` для валидации сохранения фактов.
+2. Устранить таймаут **filesystem_mcp** (увеличить timeout или health-check).
+
+Следующие шаги тестирования:
+1. Создать `memory_agent_v2` с полной памятью (см. блок «🧠 Тестирование агентов с памятью»).
+2. Запустить пару запросов на запоминание/извлечение.
+3. Повторно протестировать MCP после увеличения таймаута.
+
+| Проверка MCP "filesystem_mcp" (10s timeout) | ⚠️ Списка инструментов нет, таймаут 5 сек — требуется увеличить `timeout_seconds` либо проверить npx-сервер |

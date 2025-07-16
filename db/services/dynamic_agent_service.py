@@ -13,7 +13,11 @@ from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
-from db.models import DynamicAgent, ModelConfig, ToolsConfig, MemoryConfig, KnowledgeConfig, StorageConfig, ReasoningConfig, TeamConfig, AgentSettings
+from db.models import (
+    DynamicAgent, ModelConfig, ToolsConfig, MemoryConfig, KnowledgeConfig, 
+    StorageConfig, ReasoningConfig, TeamConfig, AgentSettings,
+    AgnoAgentSettings, AgnoKnowledgeParams, AgnoReasoningParams, AgnoStorageParams
+)
 from db.session import SessionLocal
 from db.services.dynamic_tool_service import dynamic_tool_service
 from db.url import get_db_url
@@ -185,7 +189,8 @@ class DynamicAgentService:
                 reasoning_config=agent_data.get('reasoning_config'),
                 team_config=agent_data.get('team_config'),
                 settings=agent_data.get('settings'),
-                is_active=agent_data.get('is_active', True)
+                is_active=agent_data.get('is_active', True),
+                is_active_api=agent_data.get('is_active_api', True)
             )
             
             session.add(agent)
@@ -312,8 +317,11 @@ class DynamicAgentService:
                 try:
                     # Проверяем валидность через создание экземпляра Pydantic модели
                     config_instance = config_class(**agent_data[config_key])
-                    # Преобразуем обратно в dict для сохранения в JSONB
-                    agent_data[config_key] = config_instance.dict(exclude_none=True)
+                    # ✅ ИСПРАВЛЕНИЕ: Используем by_alias=True, чтобы в БД сохранялись
+                    # имена полей, как в API (например, 'schema' вместо 'db_schema').
+                    agent_data[config_key] = config_instance.dict(
+                        by_alias=True, exclude_unset=True, exclude_none=True
+                    )
                 except ValidationError as e:
                     raise ValueError(f"Ошибка валидации {config_key}: {e}")
                 except Exception as e:
@@ -526,6 +534,11 @@ class DynamicAgentService:
             if tools_config.tool_choice is not None:
                 agent_params['tool_choice'] = tools_config.tool_choice
         
+            # --- РЕАЛИЗОВАННЫЕ ПОЛЯ ---
+            if tools_config.function_declarations:
+                agent_params['function_declarations'] = tools_config.function_declarations
+            # --- КОНЕЦ ---
+        
         # === ПАМЯТЬ ===
         memory_config = dynamic_agent.get_memory_config()
         if memory_config and memory_config.enable_agentic_memory:
@@ -542,22 +555,41 @@ class DynamicAgentService:
             if memory_config.enable_user_memories:
                 agent_params['enable_user_memories'] = True
         
-        # === ХРАНИЛИЩЕ ===
-        storage_config = dynamic_agent.get_storage_config()
-        if storage_config and storage_config.enabled:
-            from agno.storage.agent.postgres import PostgresAgentStorage
+            # --- РЕАЛИЗОВАННЫЕ ПОЛЯ ---
+            if memory_config.enable_session_summaries:
+                agent_params['enable_session_summaries'] = memory_config.enable_session_summaries
             
-            agent_params['storage'] = PostgresAgentStorage(
-                table_name="sessions",
-                db_url=storage_config.db_url or self.db_url,
-                schema="ai"
-            )
+            if memory_config.add_memory_references is not None:
+                agent_params['add_memory_references'] = memory_config.add_memory_references
+            
+            if memory_config.add_session_summary_references is not None:
+                agent_params['add_session_summary_references'] = memory_config.add_session_summary_references
+
+            if memory_config.memory_filters:
+                agent_params['memory_filters'] = memory_config.memory_filters
+            # --- КОНЕЦ ---
+        
+        # 6. Конфигурация хранилища (Storage)
+        storage = self._create_storage_instance(dynamic_agent.storage_config)
+        if storage:
+            agent_params['storage'] = storage
+
+        # 7. Конфигурация знаний (Knowledge) - RAG
+        knowledge = self._create_knowledge_instance(dynamic_agent.knowledge_config)
+        if knowledge:
+            agent_params['knowledge'] = knowledge
+        
+        # 8. Конфигурация рассуждений (Reasoning)
+        reasoning = self._create_reasoning_config(dynamic_agent.reasoning_config)
+        if reasoning:
+            agent_params['reasoning'] = reasoning
         
         # === НАСТРОЙКИ (из AgentSettings) ===
         settings = dynamic_agent.get_settings()
         if settings:
-            settings_dict = settings.dict(exclude_none=True)
-            agent_params.update(settings_dict)
+            # 🛡️ Системное решение: используем безопасную модель для фильтрации
+            safe_settings = AgnoAgentSettings(**settings.dict(exclude_none=True))
+            agent_params.update(safe_settings.dict(exclude_none=True))
         
         # === ПЕРЕОПРЕДЕЛЕНИЯ ===
         excluded_params = {'model_override', 'files', 'stream', 'user_id', 'session_id', 'stop_after_tool_call'}
@@ -602,47 +634,131 @@ class DynamicAgentService:
     def _build_agno_agent(self, dynamic_agent: DynamicAgent, **kwargs) -> Agent:
         """УСТАРЕВШИЙ синхронный метод создания Agno Agent (без MCP поддержки)"""
         print("⚠️ Используется синхронный метод создания агента - MCP инструменты будут пропущены")
-        
-        # === БАЗОВЫЕ ПАРАМЕТРЫ ===
+
         agent_params = {
             'name': dynamic_agent.name,
             'agent_id': dynamic_agent.agent_id,
             'description': dynamic_agent.description,
             'instructions': dynamic_agent.instructions,
+            'is_active': dynamic_agent.is_active,
+            'is_active_api': dynamic_agent.is_active_api,
+            'created_at': dynamic_agent.created_at,
+            'updated_at': dynamic_agent.updated_at,
         }
-        
-        # === МОДЕЛЬ ===
+
         model_config = dynamic_agent.get_model_config()
         if model_config:
             agent_params['model'] = self._create_model_instance(model_config)
-        
-        # === ИНСТРУМЕНТЫ (БЕЗ MCP) ===
+
         tools_config = dynamic_agent.get_tools_config()
+        all_tools = []
         if tools_config:
-            all_tools = []
-            
-            # Статические инструменты
             if tools_config.tools:
                 all_tools.extend(self._create_static_tool_instances(tools_config.tools))
-            
-            # Динамические инструменты  
             if tools_config.dynamic_tools:
                 all_tools.extend(self._create_dynamic_tool_instances(tools_config.dynamic_tools))
-            
-            # Кастомные инструменты
             if tools_config.custom_tools:
                 all_tools.extend(self._create_custom_tool_instances(tools_config.custom_tools))
             
-            # ⚠️ MCP инструменты пропускаем в синхронном режиме
-            if tools_config.mcp_servers:
-                print(f"⚠️ MCP серверы {tools_config.mcp_servers} пропущены - используйте async метод")
-            
-            if all_tools:
-                agent_params['tools'] = all_tools
-        
-        # Остальная логика такая же...
-        return Agent(**agent_params)
+            agent_params['tools'] = all_tools
+            if tools_config.show_tool_calls is not None:
+                agent_params['show_tool_calls'] = tools_config.show_tool_calls
+            if tools_config.tool_call_limit is not None:
+                agent_params['tool_call_limit'] = tools_config.tool_call_limit
+            if tools_config.tool_choice is not None:
+                agent_params['tool_choice'] = tools_config.tool_choice
+            if tools_config.function_declarations:
+                agent_params['function_declarations'] = tools_config.function_declarations
+
+        agent_params['memory'] = None
+
+        storage = self._create_storage_instance(dynamic_agent.storage_config)
+        if storage:
+            agent_params['storage'] = storage
+
+        knowledge = self._create_knowledge_instance(dynamic_agent.knowledge_config)
+        if knowledge:
+            agent_params['knowledge'] = knowledge
+
+        reasoning = self._create_reasoning_config(dynamic_agent.reasoning_config)
+        if reasoning:
+            agent_params['reasoning'] = reasoning
+
+        settings = dynamic_agent.get_settings()
+        if settings:
+            # 🛡️ Системное решение: используем безопасную модель для фильтрации
+            safe_settings = AgnoAgentSettings(**settings.dict(exclude_none=True))
+            agent_params.update(safe_settings.dict(exclude_none=True))
+
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        agent_params.update(overrides)
+
+        try:
+            agent = Agent(**agent_params)
+        except Exception as e:
+            logger.error(f"Failed to build Agno agent '{dynamic_agent.agent_id}': {e}")
+            raise ValueError(f"Не удалось собрать агента: {e}")
+
+        return agent
     
+    def _create_storage_instance(self, storage_config: Optional[Dict[str, Any]]) -> Optional[Any]:
+        if not storage_config or not storage_config.get('enabled', False):
+            return None
+        
+        storage_conf = StorageConfig(**storage_config)
+        if storage_conf.storage_type in {"postgres", "postgresql"}:
+            try:
+                # 🛡️ Системное решение: используем безопасную модель для фильтрации
+                safe_params = AgnoStorageParams(**storage_conf.dict(by_alias=True))
+                # ✅ Используем by_alias=True, чтобы получить 'schema', а не 'db_schema'
+                storage_params = safe_params.dict(exclude_none=True, by_alias=True)
+
+                if 'db_url' not in storage_params or storage_params.get('db_url') is None:
+                    storage_params['db_url'] = self.db_url
+                
+                # Заполняем schema, если она не была передана
+                if 'schema' not in storage_params or storage_params.get('schema') is None:
+                    storage_params['schema'] = 'ai' # значение по-умолчанию
+
+                logger.debug(f"Creating PostgresAgentStorage with params: {storage_params}")
+                return PostgresAgentStorage(**storage_params)
+            except Exception as e:
+                logger.error(f"Failed to initialize PostgresAgentStorage: {e}")
+                raise ValueError(f"Ошибка конфигурации хранилища: {e}")
+        else:
+            logger.warning(f"Unsupported storage type: {storage_conf.storage_type}")
+        return None
+
+    def _create_knowledge_instance(self, knowledge_config: Optional[Dict[str, Any]]) -> Optional[Any]:
+        if not knowledge_config or not knowledge_config.get('add_references', False):
+            return None
+        try:
+            # 🛡️ Системное решение: используем безопасную модель для фильтрации
+            knowledge_conf = KnowledgeConfig(**knowledge_config)
+            safe_params = AgnoKnowledgeParams(**knowledge_conf.dict())
+            knowledge_params = safe_params.dict(exclude_none=True)
+            
+            logger.debug(f"Creating AgentKnowledge with params: {knowledge_params}")
+            return AgentKnowledge(**knowledge_params)
+        except Exception as e:
+            logger.error(f"Failed to initialize AgentKnowledge: {e}")
+            raise ValueError(f"Ошибка конфигурации знаний: {e}")
+
+    def _create_reasoning_config(self, reasoning_config: Optional[Dict[str, Any]]) -> Optional[Dict]:
+        if not reasoning_config or not reasoning_config.get('reasoning', False):
+            return None
+        try:
+            # 🛡️ Системное решение: используем безопасную модель для фильтрации
+            reasoning_conf = ReasoningConfig(**reasoning_config)
+            safe_params = AgnoReasoningParams(**reasoning_conf.dict())
+            reasoning_params = safe_params.dict(exclude_none=True)
+
+            logger.debug(f"Creating ReasoningConfig with params: {reasoning_params}")
+            return reasoning_params
+        except Exception as e:
+            logger.error(f"Failed to initialize ReasoningConfig: {e}")
+            raise ValueError(f"Ошибка конфигурации рассуждений: {e}")
+
     def _create_static_tool_instances(self, tools_config: List[Dict[str, Any]]) -> List[Any]:
         """Создать экземпляры статических инструментов из конфигурации"""
         if not AGNO_AVAILABLE:
@@ -744,7 +860,7 @@ class DynamicAgentService:
         for server_id in server_ids:
             try:
                 # Пытаемся создать MCP-инструмент, но не более 3 сек, иначе пропускаем
-                async with anyio.fail_after(3):
+                async with anyio.fail_after(10):
                     mcp_tools = await mcp_service.create_tool_instance_async(server_id)
                 if mcp_tools:
                     tool_instances.append(mcp_tools)

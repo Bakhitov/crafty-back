@@ -48,6 +48,10 @@ class MCPProvider:
         
         logger.info(f"Создание MCP подключения '{server_id}' через {transport}")
         
+        # timeout_seconds определяет лимит ожидания handshake (по умолчанию 5 с).
+        if 'timeout_seconds' not in mcp_params:
+            mcp_params['timeout_seconds'] = 10
+
         # ✅ Создаем MCPTools через стандартный Agno API
         mcp_tools = MCPTools(**mcp_params)
         

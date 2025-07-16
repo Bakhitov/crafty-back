@@ -11,15 +11,19 @@ from db.services.dynamic_tool_service import dynamic_tool_service
 
 tools_router = APIRouter(prefix="/tools", tags=["Dynamic Tools"])
 
+# === Создание динамического инструмента ===
+# module_path теперь опционален – вычисляется автоматически, если не передан
+
 class ToolCreateRequest(BaseModel):
     tool_id: str
     name: str
-    display_name: str = None
+    display_name: str | None = None
     agno_class: str
+    module_path: str | None = None  # ← новое поле
     config: Dict[str, Any] = {}
-    description: str = None
-    category: str = None
-    icon: str = None
+    description: str | None = None
+    category: str | None = None
+    icon: str | None = None
 
 class ToolUpdateRequest(BaseModel):
     name: str = None
@@ -78,7 +82,21 @@ def create_tool(request: ToolCreateRequest):
                 detail=f"Инструмент с ID {request.tool_id} уже существует"
             )
         
-        tool = dynamic_tool_service.create_tool(request.dict())
+        # --- Автовычисляем module_path, если не передан
+        tool_payload = request.dict()
+        if not tool_payload.get("module_path"):
+            try:
+                import importlib
+                # Пытаемся найти класс в agno.tools.*
+                possible_module = f"agno.tools.{request.agno_class.lower().replace('tools', '')}"
+                mod = importlib.import_module(possible_module)
+                # module_path = полное имя модуля (например agno.tools.duckduckgo)
+                tool_payload["module_path"] = mod.__name__
+            except Exception:
+                # Фоллбэк: agno.tools.<clsname lower>
+                tool_payload["module_path"] = f"agno.tools.{request.agno_class.lower()}"
+
+        tool = dynamic_tool_service.create_tool(tool_payload)
         return {
             "message": "Инструмент успешно создан",
             "tool": tool.to_dict()

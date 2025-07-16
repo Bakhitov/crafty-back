@@ -62,6 +62,7 @@ class AgentResponse(BaseModel):
     description: Optional[str] = None
     instructions: Optional[str] = None
     is_active: bool
+    is_active_api: bool
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     
@@ -118,8 +119,8 @@ class CreateAgentRequest(BaseModel):
     config_version: Optional[str] = "1.0"
     tags: Optional[List[str]] = None
     
-    # Дополнительные настройки
-    additional_settings: Optional[Dict[str, Any]] = None
+    # ✅ ИЗМЕНЕНО: унифицируем имя поля на 'settings'
+    settings: Optional[Dict[str, Any]] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -149,9 +150,10 @@ class UpdateAgentRequest(BaseModel):
     config_version: Optional[str] = None
     tags: Optional[List[str]] = None
     
-    # Дополнительные настройки
-    additional_settings: Optional[Dict[str, Any]] = None
+    # ✅ ИЗМЕНЕНО: унифицируем имя поля на 'settings'
+    settings: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
+    is_active_api: Optional[bool] = None
 
 
 def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
@@ -163,6 +165,7 @@ def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
         description=agent.description,
         instructions=agent.instructions,
         is_active=agent.is_active,
+        is_active_api=agent.is_active_api,
         created_at=agent.created_at.isoformat() if agent.created_at else None,
         updated_at=agent.updated_at.isoformat() if agent.updated_at else None,
         
@@ -190,6 +193,40 @@ def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
         # Полные settings для дополнительных параметров
         settings=agent.settings
     )
+
+
+def _prepare_agent_data(agent_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Собирает все разрозненные конфигурационные поля в единый словарь 'settings'.
+    Приоритет отдается более специфичным полям (например, `config_version`)
+    над общим объектом `settings`.
+    """
+    
+    # 1. Начинаем с объекта 'settings', если он был передан.
+    final_settings = agent_data.pop('settings', None) or {}
+
+    # 2. "Сплющиваем" поля-конфиги, перезаписывая значения в 'final_settings'.
+    setting_keys_to_merge = [
+        'system_message_config', 'user_message_config', 'context_config',
+        'history_config', 'response_config', 'streaming_config',
+        'debug_config', 'extra_config'
+    ]
+    for key in setting_keys_to_merge:
+        config_dict = agent_data.pop(key, None)
+        if isinstance(config_dict, dict):
+            final_settings.update(config_dict)
+
+    # 3. Переносим простые поля, перезаписывая значения в 'final_settings'.
+    simple_setting_keys_to_move = ['config_version', 'tags']
+    for key in simple_setting_keys_to_move:
+        if key in agent_data:
+            final_settings[key] = agent_data.pop(key)
+
+    # 4. Возвращаем 'final_settings' в основной словарь.
+    if final_settings:
+        agent_data['settings'] = final_settings
+                
+    return agent_data
 
 
 @agents_router.get("", response_model=List[str])
@@ -273,9 +310,8 @@ async def create_agent(request: CreateAgentRequest):
     try:
         agent_data = request.dict(exclude_none=True)
         
-        # Маппинг полей между API и сервисом
-        if 'model_configuration' in agent_data:
-            pass
+        # ✅ ИСПРАВЛЕНИЕ: Собираем все настройки в один объект
+        agent_data = _prepare_agent_data(agent_data)
         
         agent = dynamic_agent_service.create_agent(agent_data)
         
@@ -308,9 +344,8 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
     try:
         agent_data = request.dict(exclude_none=True)
         
-        # Маппинг полей между API и сервисом
-        if 'model_configuration' in agent_data:
-            pass
+        # ✅ ИСПРАВЛЕНИЕ: Собираем все настройки в один объект
+        agent_data = _prepare_agent_data(agent_data)
         
         agent = dynamic_agent_service.update_agent(agent_id, agent_data)
         
@@ -411,22 +446,31 @@ async def create_agent_run(
     stop_after_tool_call: bool = Form(False),
 ):
     """
-    Отправляет сообщение конкретному агенту и возвращает ответ.
-    Поддерживает загрузку файлов включая изображения, аудио, видео и документы.
-    Полностью изолирован от Agno Framework.
-
-    Args:
-        agent_id: ID агента для взаимодействия
-        message: Сообщение для отправки агенту
-        stream: Использовать ли потоковую передачу ответа
-        model: Модель для использования агентом
-        user_id: Опциональный ID пользователя для сессии
-        session_id: Опциональный ID сессии для разговора
-        files: Опциональный список файлов для загрузки и обработки
-
-    Returns:
-        Либо потоковый ответ, либо полный ответ агента
+    Создает и выполняет запуск агента.
+    Поддерживает потоковую передачу и загрузку файлов.
     """
+    # 1. Получаем агента
+    agent = dynamic_agent_service.get_agent_by_id(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent with ID '{agent_id}' not found"
+        )
+    
+    # 2. Проверяем, активен ли API для этого агента
+    if not agent.is_active_api:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API for agent '{agent_id}' is disabled."
+        )
+
+    # 3. Базовая валидация
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message cannot be empty"
+        )
+
     logger.debug(f"RunRequest: agent_id={agent_id}, message={message}, stream={stream}, model={model}")
 
     try:
@@ -969,3 +1013,13 @@ async def get_agent_memories(agent_id: str, user_id: str = Query(..., min_length
     except Exception as e:
         logger.error(f"Error getting memories for agent {agent_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve agent memories")
+
+@agents_router.post("/cache/clear")
+async def clear_all_cache():
+    """Алиас для /cache/invalidate – поддержка старого тест-плана."""
+    return await invalidate_all_cache()
+
+@agents_router.post("/{agent_id}/cache/clear")
+async def clear_agent_cache(agent_id: str):
+    """Алиас для /{agent_id}/cache/invalidate – поддержка старого тест-плана."""
+    return await invalidate_agent_cache(agent_id)

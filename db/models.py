@@ -503,8 +503,8 @@ class StorageConfig(BaseModel):
     storage_type: Optional[str] = Field(default="postgres", description="Тип хранилища")
     db_url: Optional[str] = Field(default=None, description="URL базы данных")
     enabled: Optional[bool] = Field(default=True, description="Включено ли хранилище")
-    session_name: Optional[str] = Field(default=None, description="Название сессии")
-    session_state: Optional[Dict[str, Any]] = Field(default=None, description="Состояние сессии")
+    table_name: Optional[str] = Field(default="sessions", description="Название таблицы для сессий")
+    db_schema: Optional[str] = Field(default="ai", description="Схема базы данных", alias="schema")
     store_events: Optional[bool] = Field(default=False, description="Сохранять события выполнения")
     extra_data: Optional[Dict[str, Any]] = Field(default=None, description="Дополнительные данные")
 
@@ -530,22 +530,6 @@ class StorageConfig(BaseModel):
         # Базовая проверка формата URL
         if not v.startswith(('postgresql://', 'sqlite://', 'redis://', 'mysql://')):
             raise ValueError("db_url должен начинаться с поддерживаемого протокола (postgresql://, sqlite://, redis://, mysql://)")
-        
-        return v
-
-    @validator('session_name')
-    def validate_session_name(cls, v):
-        """Валидация названия сессии"""
-        if v is None:
-            return v
-        
-        if len(v) > 255:
-            raise ValueError("session_name не может быть длиннее 255 символов")
-        
-        # Проверяем на недопустимые символы
-        import re
-        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', v):
-            raise ValueError("session_name может содержать только буквы, цифры, _, -, .")
         
         return v
 
@@ -582,6 +566,10 @@ class ReasoningConfig(BaseModel):
     reasoning_instructions: Optional[List[str]] = Field(default=None, description="Инструкции для reasoning")
     stream_reasoning: Optional[bool] = Field(default=False, description="Стримить шаги рассуждения")
     save_reasoning_steps: Optional[bool] = Field(default=True, description="Сохранять шаги рассуждения")
+    show_full_reasoning: Optional[bool] = Field(
+        default=False, 
+        description="Показывать полный процесс рассуждения в ответе"
+    )
 
 
 class TeamConfig(BaseModel):
@@ -730,6 +718,7 @@ class DynamicAgent(Base):
     
     # Мета-информация
     is_active = Column(Boolean, nullable=True, default=True)
+    is_active_api = Column(Boolean, nullable=True, default=True)
     created_at = Column(DateTime, nullable=True, server_default=func.current_timestamp())
     updated_at = Column(DateTime, nullable=True, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
@@ -752,24 +741,25 @@ class DynamicAgent(Base):
         return name.strip()
 
     def to_dict(self) -> Dict[str, Any]:
-        """Преобразование модели в словарь"""
+        """Преобразует объект агента в словарь, включая все конфигурации."""
         return {
-            'id': self.id,
-            'name': self.name,
-            'agent_id': self.agent_id,
-            'description': self.description,
-            'instructions': self.instructions,
-            'model_configuration': self.model_configuration,
-            'tools_config': self.tools_config,
-            'knowledge_config': self.knowledge_config,
-            'memory_config': self.memory_config,
-            'storage_config': self.storage_config,
-            'reasoning_config': self.reasoning_config,
-            'team_config': self.team_config,
-            'settings': self.settings,
-            'is_active': self.is_active,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "id": self.id,
+            "name": self.name,
+            "agent_id": self.agent_id,
+            "description": self.description,
+            "instructions": self.instructions,
+            "model_configuration": self.model_configuration,
+            "tools_config": self.tools_config,
+            "knowledge_config": self.knowledge_config,
+            "memory_config": self.memory_config,
+            "storage_config": self.storage_config,
+            "reasoning_config": self.reasoning_config,
+            "team_config": self.team_config,
+            "settings": self.settings,
+            "is_active": self.is_active,
+            "is_active_api": self.is_active_api,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
 
     # === Методы для работы с Pydantic моделями ===
@@ -1195,3 +1185,99 @@ class MCPServer(Base):
     
     def __repr__(self):
         return f"<MCPServer(server_id='{self.server_id}', name='{self.name}', transport='{self.transport}')" 
+
+# ==============================================================================
+# === 🛡️ Безопасные модели для прямой передачи в Agno (системное решение) ===
+# ==============================================================================
+
+class AgnoBaseModel(BaseModel):
+    """Базовая модель с общей конфигурацией для безопасной передачи в Agno."""
+    class Config:
+        extra = 'ignore'  # Игнорировать любые поля, не определенные в этой модели
+
+# ------------------------------------------------------------------------------
+# --- 1. Безопасные параметры для agno.storage.agent.postgres.PostgresAgentStorage ---
+# ------------------------------------------------------------------------------
+
+class AgnoStorageParams(AgnoBaseModel):
+    """
+    Содержит только те поля, которые принимает конструктор PostgresAgentStorage.
+    """
+    db_url: Optional[str] = None
+    table_name: Optional[str] = "sessions"
+    # ❗️ Поле переименовано в db_schema во избежание конфликта с BaseModel.schema()
+    db_schema: Optional[str] = Field(default=None, alias="schema") 
+    auto_upgrade_schema: Optional[bool] = False
+
+# ------------------------------------------------------------------------------
+# --- 2. Безопасные параметры для agno.knowledge.AgentKnowledge ---
+# ------------------------------------------------------------------------------
+
+class AgnoKnowledgeParams(AgnoBaseModel):
+    """
+    Содержит только те поля, которые принимает конструктор AgentKnowledge.
+    """
+    add_references: Optional[bool] = None
+    references_format: Optional[str] = None
+    search_knowledge: Optional[bool] = None
+    update_knowledge: Optional[bool] = None
+    max_references: Optional[int] = None
+    similarity_threshold: Optional[float] = None
+    
+# ------------------------------------------------------------------------------
+# --- 3. Безопасные параметры для agno.agent.Agent (в части Reasoning) ---
+# ------------------------------------------------------------------------------
+
+class AgnoReasoningParams(AgnoBaseModel):
+    """
+    Содержит только те поля, которые используются для конфигурации Reasoning в Agent.
+    """
+    reasoning: Optional[bool] = None
+    max_steps: Optional[int] = None
+    max_tokens_per_step: Optional[int] = None
+    stop_on_observation: Optional[bool] = None
+
+# ------------------------------------------------------------------------------
+# --- 4. Безопасные параметры для agno.agent.Agent (общие настройки) ---
+# ------------------------------------------------------------------------------
+
+class AgnoAgentSettings(AgnoBaseModel):
+    """
+    Содержит только те общие поля из AgentSettings, которые принимает Agno Agent.
+    Исключает наши кастомные поля типа 'config_version', 'store_events'.
+    """
+    # Общие
+    introduction: Optional[str] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    
+    # Системные и пользовательские сообщения
+    system_message: Optional[str] = None
+    system_message_role: Optional[str] = None
+    create_default_system_message: Optional[bool] = None
+    user_message: Optional[str] = None
+    user_message_role: Optional[str] = None
+    create_default_user_message: Optional[bool] = None
+    
+    # Контекст и состояние
+    add_state_to_instructions: Optional[bool] = None
+    add_state_in_messages: Optional[bool] = None
+    add_datetime_to_instructions: Optional[bool] = None
+    
+    # История
+    add_history_to_messages: Optional[bool] = None
+    num_history_runs: Optional[int] = None
+    read_chat_history: Optional[bool] = None
+    
+    # Форматирование и вывод
+    markdown: Optional[bool] = None
+    stream: Optional[bool] = None
+    json_output: Optional[bool] = None
+    
+    # Память
+    enable_agentic_memory: Optional[bool] = None
+    enable_user_memories: Optional[bool] = None
+    add_memory_references: Optional[bool] = None
+    
+    # Отладка
+    debug_mode: Optional[bool] = None 

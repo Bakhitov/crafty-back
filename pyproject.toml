@@ -6,10 +6,11 @@ readme = "README.md"
 authors = [{ name = "Agno", email = "hello@agno.com" }]
 
 dependencies = [
-  "agno==1.7.0",
+  "agno==1.7.2",
   "alembic",
   "anthropic",
   "ollama",
+  "mistralai",
   "google-genai",
   "duckduckgo-search",
   "fastapi[standard]",
@@ -47,11 +48,24 @@ dependencies = [
   "rich",
   "typer",
   "click",
+  "exa-py",
   "exa_py",
+  "slack",
+  "slack_sdk",
+  "scrapegraph-py",
+  "tweepy",
   "newspaper4k",
   "lxml_html_clean",
   "youtube-transcript-api", 
-  "mcp-server-git"
+  "mcp-server-git",
+  "arxiv",
+  "pycountry",
+  "googlesearch-python",
+  "firecrawl-py",
+  "packaging",
+  "python-dotenv",
+  "ddgs",
+  "memory_profiler"
 ]
 
 [project.optional-dependencies]
