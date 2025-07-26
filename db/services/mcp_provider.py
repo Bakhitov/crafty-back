@@ -50,7 +50,7 @@ class MCPProvider:
         
         # timeout_seconds определяет лимит ожидания handshake (по умолчанию 5 с).
         if 'timeout_seconds' not in mcp_params:
-            mcp_params['timeout_seconds'] = 10
+            mcp_params['timeout_seconds'] = 5  # ⚡ ОПТИМИЗАЦИЯ: Уменьшаем с 10 до 5 секунд
 
         # ✅ Создаем MCPTools через стандартный Agno API
         mcp_tools = MCPTools(**mcp_params)

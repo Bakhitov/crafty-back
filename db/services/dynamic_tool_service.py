@@ -5,7 +5,7 @@
 
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 
 from db.models import DynamicTool, CustomTool, MCPServer
 from db.session import SessionLocal
@@ -59,6 +59,8 @@ class DynamicToolService:
                 description=tool_data.get('description'),
                 category=tool_data.get('category'),
                 icon=tool_data.get('icon'),
+                company_id=tool_data.get('company_id'),  # ✅ Добавляем поддержку company_id
+                is_public=tool_data.get('is_public', False),  # ✅ Добавляем поддержку is_public
                 is_active=tool_data.get('is_active', True)
             )
             
@@ -111,6 +113,50 @@ class DynamicToolService:
             return session.query(DynamicTool).filter(
                 and_(
                     DynamicTool.category == category,
+                    DynamicTool.is_active == True
+                )
+            ).order_by(DynamicTool.name).all()
+    
+    def get_tools_by_company(self, company_id: str) -> List[DynamicTool]:
+        """Получить инструменты по ID компании"""
+        with self.db_session() as session:
+            return session.query(DynamicTool).filter(
+                and_(
+                    DynamicTool.company_id == company_id,
+                    DynamicTool.is_active == True
+                )
+            ).order_by(DynamicTool.created_at.desc()).all()
+    
+    def get_public_tools(self) -> List[DynamicTool]:
+        """Получить публичные инструменты (is_public=True)"""
+        with self.db_session() as session:
+            return session.query(DynamicTool).filter(
+                and_(
+                    DynamicTool.is_public == True,
+                    DynamicTool.is_active == True
+                )
+            ).order_by(DynamicTool.name).all()
+    
+    def get_private_tools_by_company(self, company_id: str) -> List[DynamicTool]:
+        """Получить приватные инструменты конкретной компании"""
+        with self.db_session() as session:
+            return session.query(DynamicTool).filter(
+                and_(
+                    DynamicTool.company_id == company_id,
+                    DynamicTool.is_public == False,
+                    DynamicTool.is_active == True
+                )
+            ).order_by(DynamicTool.created_at.desc()).all()
+    
+    def get_accessible_tools_for_company(self, company_id: str) -> List[DynamicTool]:
+        """Получить все доступные инструменты для компании (публичные + свои приватные)"""
+        with self.db_session() as session:
+            return session.query(DynamicTool).filter(
+                and_(
+                    or_(
+                        DynamicTool.is_public == True,  # Публичные инструменты
+                        DynamicTool.company_id == company_id  # Инструменты компании
+                    ),
                     DynamicTool.is_active == True
                 )
             ).order_by(DynamicTool.name).all()

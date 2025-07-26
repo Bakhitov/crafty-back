@@ -1,3 +1,6 @@
+import os
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
@@ -34,3 +37,37 @@ def create_app() -> FastAPI:
 
 # Create a FastAPI app
 app = create_app()
+
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация при старте приложения"""
+    print("🚀 Starting Agent API...")
+    
+    # ⚡ ОПТИМИЗАЦИЯ: Предварительная загрузка кэша популярных агентов
+    try:
+        from db.services.dynamic_agent_service import dynamic_agent_service
+        # Загружаем кэш для всех активных агентов в фоновом режиме
+        asyncio.create_task(_preload_cache_background())
+    except Exception as e:
+        print(f"⚠️ Не удалось предварительно загрузить кэш: {e}")
+
+async def _preload_cache_background():
+    """Фоновая загрузка кэша агентов"""
+    try:
+        import time
+        await asyncio.sleep(2)  # Ждём запуска сервера
+        
+        start_time = time.time()
+        from db.services.dynamic_agent_service import dynamic_agent_service
+        dynamic_agent_service.preload_agent_cache()
+        
+        end_time = time.time()
+        print(f"⚡ Кэш агентов предварительно загружен за {end_time - start_time:.2f} секунд")
+        
+    except Exception as e:
+        print(f"⚠️ Ошибка фоновой загрузки кэша: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Очистка при остановке приложения"""
+    print("🛑 Shutting down Agent API...")

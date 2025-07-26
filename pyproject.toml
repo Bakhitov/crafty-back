@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Agno", email = "hello@agno.com" }]
 
 dependencies = [
-  "agno==1.7.2",
+  "agno==1.7.4",
   "alembic",
   "anthropic",
   "ollama",

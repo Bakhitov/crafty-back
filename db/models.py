@@ -214,195 +214,64 @@ class ModelConfig(BaseModel):
 
 class ToolsConfig(BaseModel):
     """Конфигурация инструментов (идентична Agno Agent параметрам)"""
-    tools: Optional[List[Dict[str, Any]]] = Field(default=None, description="Список инструментов")
-    show_tool_calls: Optional[bool] = Field(default=False, description="Показывать ли вызовы инструментов")
-    tool_call_limit: Optional[int] = Field(
-        default=None, 
-        gt=0, 
-        le=100, 
-        description="Лимит вызовов инструментов (1-100)"
-    )
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = Field(default=None, description="Управление выбором инструмента")
-    tool_hooks: Optional[List[Dict[str, Any]]] = Field(default=None, description="Хуки до/после вызова инструмента")
+    tools: Optional[List[Dict[str, Any]]] = Field(default=None, description="Список статических инструментов")
+    show_tool_calls: Optional[bool] = Field(default=None, description="Показывать ли вызовы инструментов")
+    tool_call_limit: Optional[int] = Field(default=None, description="Лимит вызовов инструментов")
+    tool_choice: Optional[Union[str, Dict]] = Field(default=None, description="Управление выбором инструмента")
     
-    # === НОВОЕ ПОЛЕ для динамических инструментов ===
-    dynamic_tools: Optional[List[str]] = Field(
+    # === НОВЫЙ ПАРАМЕТР: TOOL HOOKS ===
+    tool_hooks: Optional[List[Dict[str, Any]]] = Field(
         default=None, 
-        description="Список ID динамических инструментов"
+        description="Хуки до/после вызова инструмента (ссылки на функции)"
     )
     
-    # === ПОЛЯ ДЛЯ КАСТОМНЫХ И MCP ИНСТРУМЕНТОВ ===
-    custom_tools: Optional[List[str]] = Field(
-        default=None, 
-        description="Список ID кастомных Python инструментов"
-    )
-    mcp_servers: Optional[List[str]] = Field(
-        default=None, 
-        description="Список ID MCP серверов"
-    )
+    # === ДИНАМИЧЕСКИЕ ИНСТРУМЕНТЫ ===
+    dynamic_tools: Optional[List[str]] = Field(default=None, description="Список ID динамических инструментов из БД")
+    custom_tools: Optional[List[str]] = Field(default=None, description="Список ID кастомных Python инструментов")
+    mcp_servers: Optional[List[str]] = Field(default=None, description="Список ID MCP серверов")
     
     # === ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ ===
     function_declarations: Optional[List[Dict[str, Any]]] = Field(default=None, description="Объявления функций")
 
-    @validator('tools')
-    def validate_tools(cls, v):
-        """Валидация списка инструментов"""
-        if v is None:
-            return v
-        
-        if not isinstance(v, list):
-            raise ValueError("tools должно быть списком")
-        
-        if len(v) > 50:
-            raise ValueError("Максимум 50 инструментов на агента")
-        
-        # Полный список инструментов Agno 1.7.0 (101 класс)
-        known_agno_tools = {
-            # A-C
-            "AWSLambdaTools", "AgentQLTools", "AirflowTools", "ApifyTools", "ArxivTools",
-            "AzureOpenAITools", "BaiduSearchTools", "BraveSearchTools", "BrightDataTools",
-            "BrowserbaseTools", "CalComTools", "CalculatorTools", "CartesiaTools",
-            "ClickUpTools", "ConfluenceTools", "Crawl4aiTools", "CsvTools", "CustomApiTools",
-            
-            # D-F
-            "DalleTools", "DaytonaTools", "DesiVocalTools", "DiscordTools", "DockerTools",
-            "DuckDbTools", "DuckDuckGoTools", "E2BTools", "ElevenLabsTools", "EmailTools",
-            "ExaTools", "FalTools", "FileTools", "FinancialDatasetsTools", "FirecrawlTools",
-            
-            # G-J  
-            "GeminiTools", "GiphyTools", "GithubTools", "GmailTools", "GoogleBigQueryTools",
-            "GoogleCalendarTools", "GoogleMapTools", "GoogleSearchTools", "GoogleSheetsTools",
-            "GroqTools", "HackerNewsTools", "JinaReaderTools", "JinaReaderToolsConfig", "JiraTools",
-            
-            # K-M
-            "KnowledgeTools", "LinearTools", "LocalFileSystemTools", "LumaLabTools",
-            "MCPTools", "MLXTranscribeTools", "Mem0Tools", "ModelsLabTools", "MoviePyVideoTools",
-            "MultiMCPTools",
-            
-            # N-P
-            "NebiusTools", "Newspaper4kTools", "NewspaperTools", "OpenAITools", "OpenBBTools",
-            "OpenCVTools", "OpenWeatherTools", "PandasTools", "PostgresTools", "PubmedTools",
-            "PythonTools",
-            
-            # R-S
-            "ReasoningTools", "RedditTools", "ReplicateTools", "ResendTools", "SQLTools",
-            "ScrapeGraphTools", "SerpApiTools", "SerperTools", "ShellTools", "SlackTools",
-            "SleepTools", "SpiderTools",
-            
-            # T-W
-            "TavilyTools", "TelegramTools", "ThinkingTools", "TodoistTools", "TrelloTools",
-            "TwilioTools", "UserControlFlowTools", "VisualizationTools", "WebBrowserTools",
-            "WebTools", "WebexTools", "WebsiteTools", "WhatsAppTools", "WikipediaTools",
-            
-            # X-Z
-            "XTools", "YFinanceTools", "YouTubeTools", "ZendeskTools", "ZepAsyncTools",
-            "ZepTools", "ZoomTools"
-        }
-        
-        for i, tool in enumerate(v):
-            if not isinstance(tool, dict):
-                raise ValueError(f"Инструмент {i} должен быть объектом")
-            
-            # Проверяем структуру инструмента
-            if 'type' not in tool and 'name' not in tool and 'function' not in tool:
-                raise ValueError(f"Инструмент {i} должен содержать 'type', 'name' или 'function'")
-            
-            # Проверяем известные Agno инструменты
-            tool_name = tool.get('type') or tool.get('name')
-            if tool_name and isinstance(tool_name, str):
-                if tool_name in known_agno_tools:
-                    continue  # Известный инструмент
-                elif tool_name.endswith('Tools') and tool_name not in known_agno_tools:
-                    # Предупреждение о неизвестном инструменте (не ошибка)
-                    pass
-        
-        return v
-
-    @validator('dynamic_tools')
-    def validate_dynamic_tools(cls, v):
-        """Валидация ID динамических инструментов"""
-        if v is None:
-            return v
-        
-        if not isinstance(v, list):
-            raise ValueError("dynamic_tools должно быть списком")
-        
-        if len(v) > 20:
-            raise ValueError("Максимум 20 динамических инструментов на агента")
-        
-        for tool_id in v:
-            if not isinstance(tool_id, str):
-                raise ValueError("Все ID инструментов должны быть строками")
-            if len(tool_id) > 100:
-                raise ValueError("ID инструмента не может быть длиннее 100 символов")
-            if not tool_id.strip():
-                raise ValueError("ID инструмента не может быть пустым")
-        
-        return v
-
-    @validator('custom_tools')
-    def validate_custom_tools(cls, v):
-        """Валидация ID кастомных инструментов"""
-        if v is None:
-            return v
-        
-        if not isinstance(v, list):
-            raise ValueError("custom_tools должно быть списком")
-        
-        if len(v) > 20:
-            raise ValueError("Максимум 20 кастомных инструментов на агента")
-        
-        for tool_id in v:
-            if not isinstance(tool_id, str):
-                raise ValueError("Все ID кастомных инструментов должны быть строками")
-            if len(tool_id) > 100:
-                raise ValueError("ID кастомного инструмента не может быть длиннее 100 символов")
-            if not tool_id.strip():
-                raise ValueError("ID кастомного инструмента не может быть пустым")
-        
-        return v
-
-    @validator('mcp_servers')
-    def validate_mcp_servers(cls, v):
-        """Валидация ID MCP серверов"""
-        if v is None:
-            return v
-        
-        if not isinstance(v, list):
-            raise ValueError("mcp_servers должно быть списком")
-        
-        if len(v) > 10:
-            raise ValueError("Максимум 10 MCP серверов на агента")
-        
-        for server_id in v:
-            if not isinstance(server_id, str):
-                raise ValueError("Все ID MCP серверов должны быть строками")
-            if len(server_id) > 100:
-                raise ValueError("ID MCP сервера не может быть длиннее 100 символов")
-            if not server_id.strip():
-                raise ValueError("ID MCP сервера не может быть пустым")
-        
-        return v
-
     @validator('tool_choice')
     def validate_tool_choice(cls, v):
-        """Валидация выбора инструментов"""
+        """Валидация выбора инструмента"""
         if v is None:
             return v
         
         if isinstance(v, str):
-            valid_choices = {"auto", "none", "required"}
-            if v not in valid_choices:
-                raise ValueError(f"tool_choice должен быть одним из: {', '.join(valid_choices)}")
+            # Поддерживаемые строковые значения
+            if v not in {"auto", "none", "required"}:
+                raise ValueError("tool_choice должен быть 'auto', 'none', 'required' или объектом")
         elif isinstance(v, dict):
-            if 'type' not in v:
-                raise ValueError("tool_choice объект должен содержать 'type'")
+            # Формат принудительного выбора инструмента
             if v['type'] not in {'function', 'tool'}:
                 raise ValueError("tool_choice type должен быть 'function' или 'tool'")
         else:
             raise ValueError("tool_choice должен быть строкой или объектом")
         
         return v
+    
+    @validator('tool_hooks')
+    def validate_tool_hooks(cls, v):
+        """Валидация хуков инструментов"""
+        if v is None:
+            return v
+        
+        if not isinstance(v, list):
+            raise ValueError("tool_hooks должен быть списком")
+        
+        for hook in v:
+            if not isinstance(hook, dict):
+                raise ValueError("Каждый хук должен быть объектом")
+            
+            required_fields = {'hook_type', 'module_path', 'function_name'}
+            if not all(field in hook for field in required_fields):
+                raise ValueError(f"Хук должен содержать поля: {required_fields}")
+            
+            # Валидация типа хука
+            if hook['hook_type'] not in {'before_tool_call', 'after_tool_call', 'on_tool_error'}:
+                raise ValueError("hook_type должен быть 'before_tool_call', 'after_tool_call' или 'on_tool_error'")
 
 
 class MemoryConfig(BaseModel):
@@ -553,7 +422,18 @@ class StorageConfig(BaseModel):
 class ReasoningConfig(BaseModel):
     """Конфигурация reasoning (идентична Agno Agent параметрам)"""
     reasoning: Optional[bool] = Field(default=False, description="Включить пошаговое рассуждение")
-    reasoning_model: Optional[ModelConfig] = Field(default=None, description="Модель для reasoning")
+    
+    # === СЛОЖНЫЕ ОБЪЕКТЫ ЧЕРЕЗ ССЫЛКИ ===
+    reasoning_model: Optional[Union[ModelConfig, str]] = Field(
+        default=None, 
+        description="Модель для reasoning: ModelConfig объект или ID модели из реестра"
+    )
+    reasoning_agent: Optional[Union[Dict[str, Any], str]] = Field(
+        default=None, 
+        description="Агент для reasoning: конфигурация или agent_id для ссылки"
+    )
+    
+    # === ОСНОВНЫЕ ПАРАМЕТРЫ ===
     reasoning_min_steps: Optional[int] = Field(default=1, description="Минимальное количество шагов")
     reasoning_max_steps: Optional[int] = Field(default=10, description="Максимальное количество шагов")
     goal: Optional[str] = Field(default=None, description="Цель задачи")
@@ -561,7 +441,6 @@ class ReasoningConfig(BaseModel):
     expected_output: Optional[str] = Field(default=None, description="Ожидаемый результат")
     
     # === ДОПОЛНИТЕЛЬНЫЕ REASONING ПАРАМЕТРЫ ===
-    reasoning_agent: Optional[Dict[str, Any]] = Field(default=None, description="Агент для reasoning")
     reasoning_prompt: Optional[str] = Field(default=None, description="Промпт для reasoning")
     reasoning_instructions: Optional[List[str]] = Field(default=None, description="Инструкции для reasoning")
     stream_reasoning: Optional[bool] = Field(default=False, description="Стримить шаги рассуждения")
@@ -570,6 +449,51 @@ class ReasoningConfig(BaseModel):
         default=False, 
         description="Показывать полный процесс рассуждения в ответе"
     )
+    
+    @validator('reasoning_model')
+    def validate_reasoning_model(cls, v):
+        """Валидация модели для reasoning"""
+        if v is None:
+            return v
+        
+        if isinstance(v, str):
+            # ID модели - будет загружаться из реестра моделей
+            if len(v.strip()) == 0:
+                raise ValueError("ID модели не может быть пустым")
+            if len(v) > 100:
+                raise ValueError("ID модели не может быть длиннее 100 символов")
+        elif isinstance(v, dict):
+            # Встроенная конфигурация модели - валидируется ModelConfig
+            try:
+                ModelConfig(**v)
+            except Exception as e:
+                raise ValueError(f"Некорректная конфигурация модели: {e}")
+        else:
+            raise ValueError("reasoning_model должен быть строкой (ID) или объектом (ModelConfig)")
+        
+        return v
+    
+    @validator('reasoning_agent')
+    def validate_reasoning_agent(cls, v):
+        """Валидация агента для reasoning"""
+        if v is None:
+            return v
+        
+        if isinstance(v, str):
+            # agent_id - ссылка на другого агента
+            if len(v.strip()) == 0:
+                raise ValueError("agent_id не может быть пустым")
+            if len(v) > 100:
+                raise ValueError("agent_id не может быть длиннее 100 символов")
+        elif isinstance(v, dict):
+            # Встроенная конфигурация агента
+            required_fields = {'name', 'model', 'instructions'}
+            if not any(field in v for field in required_fields):
+                raise ValueError(f"Конфигурация агента должна содержать хотя бы одно из полей: {required_fields}")
+        else:
+            raise ValueError("reasoning_agent должен быть строкой (agent_id) или объектом (конфигурация)")
+        
+        return v
 
 
 class TeamConfig(BaseModel):
@@ -583,6 +507,12 @@ class TeamConfig(BaseModel):
     workflow_id: Optional[str] = Field(default=None, description="ID рабочего процесса")
     parent_team_id: Optional[str] = Field(default=None, description="ID родительской команды")
     
+    # === СЛОЖНЫЕ ОБЪЕКТЫ ЧЕРЕЗ ССЫЛКИ ===
+    team: Optional[List[Union[str, Dict[str, Any]]]] = Field(
+        default=None,
+        description="Команда агентов: список agent_id или встроенных конфигураций"
+    )
+    
     # === ДОПОЛНИТЕЛЬНЫЕ TEAM ПАРАМЕТРЫ ===
     team_id: Optional[str] = Field(default=None, description="UUID команды")
     team_session_id: Optional[str] = Field(default=None, description="ID сессии команды")
@@ -594,16 +524,32 @@ class TeamConfig(BaseModel):
     share_member_interactions: Optional[bool] = Field(default=False, description="Делиться логами участников")
     get_member_information_tool: Optional[bool] = Field(default=False, description="Инструмент для получения инфо об участниках")
     
-    # === ВАЛИДАЦИЯ РЕЖИМОВ ===
-    @validator('team_mode')
-    def validate_team_mode(cls, v):
-        """Валидация режима команды"""
+    @validator('team')
+    def validate_team(cls, v):
+        """Валидация команды агентов"""
         if v is None:
             return v
         
-        valid_modes = {"route", "coordinate", "collaborate"}
-        if v not in valid_modes:
-            raise ValueError(f"team_mode должен быть одним из: {', '.join(valid_modes)}")
+        if not isinstance(v, list):
+            raise ValueError("team должен быть списком")
+        
+        if len(v) > 10:
+            raise ValueError("Максимум 10 агентов в команде")
+        
+        for member in v:
+            if isinstance(member, str):
+                # agent_id - ссылка на агента
+                if len(member.strip()) == 0:
+                    raise ValueError("agent_id не может быть пустым")
+                if len(member) > 100:
+                    raise ValueError("agent_id не может быть длиннее 100 символов")
+            elif isinstance(member, dict):
+                # Встроенная конфигурация агента
+                required_fields = {'name', 'model'}
+                if not any(field in member for field in required_fields):
+                    raise ValueError(f"Конфигурация агента должна содержать хотя бы одно из полей: {required_fields}")
+            else:
+                raise ValueError("Каждый участник команды должен быть строкой (agent_id) или объектом (конфигурация)")
         
         return v
 
@@ -673,7 +619,10 @@ class AgentSettings(BaseModel):
     response_model: Optional[Dict[str, Any]] = Field(default=None, description="Модель ответа (BaseModel)")
     parse_response: Optional[bool] = Field(default=True, description="Преобразовать ответ в модель")
     use_json_mode: Optional[bool] = Field(default=False, description="Ответ в JSON формате")
-    parser_model: Optional[Dict[str, Any]] = Field(default=None, description="Модель для парсинга")
+    parser_model: Optional[Union[ModelConfig, str]] = Field(
+        default=None, 
+        description="Модель для парсинга: ModelConfig объект или ID модели из реестра"
+    )
     parser_model_prompt: Optional[str] = Field(default=None, description="Промпт для парсинга")
     
     # === СОБЫТИЯ ===
@@ -719,6 +668,9 @@ class DynamicAgent(Base):
     # Мета-информация
     is_active = Column(Boolean, nullable=True, default=True)
     is_active_api = Column(Boolean, nullable=True, default=True)
+    is_public = Column(Boolean, nullable=True, default=False)  # Публичность агента
+    company_id = Column(Text, nullable=True)  # ID компании
+    photo = Column(Text, nullable=True)  # Фото агента
     created_at = Column(DateTime, nullable=True, server_default=func.current_timestamp())
     updated_at = Column(DateTime, nullable=True, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
@@ -758,6 +710,9 @@ class DynamicAgent(Base):
             "settings": self.settings,
             "is_active": self.is_active,
             "is_active_api": self.is_active_api,
+            "is_public": self.is_public,
+            "company_id": self.company_id,
+            "photo": self.photo,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
@@ -844,131 +799,9 @@ class DynamicAgent(Base):
         """Установить настройки агента"""
         self.settings = settings.dict(exclude_none=True)
     
-    # === ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ДЛЯ ИЗВЛЕЧЕНИЯ КОНФИГУРАЦИЙ ===
+
     
-    def get_system_message_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию системного сообщения"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "system_message": settings.system_message,
-            "system_message_role": settings.system_message_role,
-            "create_default_system_message": settings.create_default_system_message,
-        }
-    
-    def get_user_message_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию пользовательского сообщения"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "user_message": settings.user_message,
-            "user_message_role": settings.user_message_role,
-            "create_default_user_message": settings.create_default_user_message,
-            "add_messages": settings.add_messages,
-        }
-    
-    def get_context_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию контекста"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "context": settings.context,
-            "add_context": settings.add_context,
-            "resolve_context": settings.resolve_context,
-            "additional_context": settings.additional_context,
-            "add_state_in_messages": settings.add_state_in_messages,
-        }
-    
-    def get_history_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию истории"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "add_history_to_messages": settings.add_history_to_messages,
-            "num_history_runs": settings.num_history_runs,
-            "search_previous_sessions_history": settings.search_previous_sessions_history,
-            "num_history_sessions": settings.num_history_sessions,
-            "read_chat_history": settings.read_chat_history,
-            "read_tool_call_history": settings.read_tool_call_history,
-        }
-    
-    def get_response_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию ответов"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "markdown": settings.markdown,
-            "add_name_to_instructions": settings.add_name_to_instructions,
-            "add_datetime_to_instructions": settings.add_datetime_to_instructions,
-            "add_location_to_instructions": settings.add_location_to_instructions,
-            "save_response_to_file": settings.save_response_to_file,
-            "response_model": settings.response_model,
-            "parse_response": settings.parse_response,
-            "use_json_mode": settings.use_json_mode,
-            "parser_model": settings.parser_model,
-            "parser_model_prompt": settings.parser_model_prompt,
-        }
-    
-    def get_streaming_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию потоковой передачи"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "stream": settings.stream,
-            "stream_intermediate_steps": settings.stream_intermediate_steps,
-        }
-    
-    def get_debug_config(self) -> Optional[Dict[str, Any]]:
-        """Получить конфигурацию отладки"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "debug_mode": settings.debug_mode,
-            "monitoring": settings.monitoring,
-            "telemetry": settings.telemetry,
-            "retries": settings.retries,
-            "delay_between_retries": settings.delay_between_retries,
-            "exponential_backoff": settings.exponential_backoff,
-            "store_events": settings.store_events,
-            "events_to_skip": settings.events_to_skip,
-        }
-    
-    def get_extra_config(self) -> Optional[Dict[str, Any]]:
-        """Получить дополнительные конфигурации"""
-        settings = self.get_settings()
-        if not settings:
-            return None
-        
-        return {
-            "extra_data": settings.extra_data,
-            "team_data": settings.team_data,
-            "team_session_id": settings.team_session_id,
-            "app_id": settings.app_id,
-        }
-    
-    def get_config_version(self) -> Optional[str]:
-        """Получить версию конфигурации"""
-        settings = self.get_settings()
-        return settings.config_version if settings else None
-    
-    def get_tags(self) -> Optional[List[str]]:
-        """Получить теги агента"""
-        settings = self.get_settings()
-        return settings.tags if settings else None
+
 
     def __repr__(self):
         return f"<DynamicAgent(id={self.id}, agent_id='{self.agent_id}', name='{self.name}', active={self.is_active})>" 
@@ -990,6 +823,8 @@ class DynamicTool(Base):
     description = Column(Text, nullable=True)
     category = Column(String(100), nullable=True)  # Категория для группировки
     icon = Column(String(255), nullable=True)  # Иконка для фронтенда
+    company_id = Column(Text, nullable=True)  # ID компании
+    is_public = Column(Boolean, nullable=True, default=False)  # Публичность инструмента
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.current_timestamp())
     updated_at = Column(DateTime, default=func.current_timestamp(), onupdate=func.current_timestamp())
@@ -1045,6 +880,8 @@ class DynamicTool(Base):
             'description': self.description,
             'category': self.category,
             'icon': self.icon,
+            'company_id': self.company_id,
+            'is_public': self.is_public,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -1260,6 +1097,9 @@ class AgnoAgentSettings(AgnoBaseModel):
     create_default_user_message: Optional[bool] = None
     
     # Контекст и состояние
+    context: Optional[Dict[str, Any]] = None
+    add_context: Optional[bool] = None
+    resolve_context: Optional[bool] = None
     add_state_to_instructions: Optional[bool] = None
     add_state_in_messages: Optional[bool] = None
     add_datetime_to_instructions: Optional[bool] = None
@@ -1267,6 +1107,8 @@ class AgnoAgentSettings(AgnoBaseModel):
     # История
     add_history_to_messages: Optional[bool] = None
     num_history_runs: Optional[int] = None
+    search_previous_sessions_history: Optional[bool] = None
+    num_history_sessions: Optional[int] = None
     read_chat_history: Optional[bool] = None
     
     # Форматирование и вывод
@@ -1279,5 +1121,204 @@ class AgnoAgentSettings(AgnoBaseModel):
     enable_user_memories: Optional[bool] = None
     add_memory_references: Optional[bool] = None
     
+    # Дополнительные возможности
+    retriever: Optional[Dict[str, Any]] = None  # Callable сериализуется как Dict
+    
     # Отладка
-    debug_mode: Optional[bool] = None 
+    debug_mode: Optional[bool] = None
+
+    # === НЕДОСТАЮЩИЕ ПАРАМЕТРЫ ИЗ AGNO.AGENT ===
+
+    # Системные и промпты
+    session_name: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    goal: Optional[str] = None
+    success_criteria: Optional[str] = None
+    expected_output: Optional[str] = None
+    additional_context: Optional[str] = None
+    timezone_identifier: Optional[str] = None
+
+    # Сообщения и инструкции
+    add_name_to_instructions: Optional[bool] = None
+    add_location_to_instructions: Optional[bool] = None
+    add_messages: Optional[List[Dict[str, Any]]] = None
+
+    # История
+    num_history_responses: Optional[int] = None
+
+    # Знания
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    enable_agentic_knowledge_filters: Optional[bool] = None
+    add_references: Optional[bool] = None
+    references_format: Optional[str] = None
+    search_knowledge: Optional[bool] = None
+    update_knowledge: Optional[bool] = None
+
+    # Инструменты
+    show_tool_calls: Optional[bool] = None
+    tool_call_limit: Optional[int] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    read_tool_call_history: Optional[bool] = None
+
+    # Reasoning
+    reasoning: Optional[bool] = None
+    reasoning_min_steps: Optional[int] = None
+    reasoning_max_steps: Optional[int] = None
+
+    # Парсинг и ответы
+    parser_model_prompt: Optional[str] = None
+    response_model: Optional[Dict[str, Any]] = None  # Type[BaseModel] -> Dict
+    parse_response: Optional[bool] = None
+    structured_outputs: Optional[bool] = None
+    use_json_mode: Optional[bool] = None
+    save_response_to_file: Optional[str] = None
+
+    # Стриминг и события
+    stream_intermediate_steps: Optional[bool] = None
+    store_events: Optional[bool] = None
+    events_to_skip: Optional[List[str]] = None  # List[RunEvent] -> List[str]
+
+    # Retry логика
+    retries: Optional[int] = None
+    delay_between_retries: Optional[int] = None
+    exponential_backoff: Optional[bool] = None
+
+    # Команда
+    team_data: Optional[Dict[str, Any]] = None
+    role: Optional[str] = None
+    respond_directly: Optional[bool] = None
+    add_transfer_instructions: Optional[bool] = None
+    team_response_separator: Optional[str] = None
+
+    # Дополнительные системные
+    debug_level: Optional[int] = None  # Literal[1, 2] -> int
+    monitoring: Optional[bool] = None
+    telemetry: Optional[bool] = None
+    extra_data: Optional[Dict[str, Any]] = None 
+
+# === ПРИМЕЧАНИЕ: Pydantic модели реестров находятся в db/registry_models.py === 
+
+# === SQL ТАБЛИЦЫ ДЛЯ РЕЕСТРОВ ===
+
+class ModelRegistryTable(Base):
+    """SQL таблица для реестра моделей"""
+    __tablename__ = 'model_registry'
+    __table_args__ = {'schema': 'ai'}
+
+    id = Column(Integer, primary_key=True)
+    registry_id = Column(String(100), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    model_config = Column(JSONB, nullable=False)  # ModelConfig в JSON
+    is_active = Column(Boolean, nullable=False, default=True)
+    tags = Column(JSONB, nullable=True)  # Массив строк
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    def get_model_config(self) -> Optional[ModelConfig]:
+        """Получить Pydantic модель из JSON"""
+        if self.model_config:
+            try:
+                return ModelConfig(**self.model_config)
+            except Exception as e:
+                print(f"Ошибка парсинга model_config для {self.registry_id}: {e}")
+                return None
+        return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертация в словарь"""
+        return {
+            'registry_id': self.registry_id,
+            'name': self.name,
+            'description': self.description,
+            'model_config': self.model_config,
+            'is_active': self.is_active,
+            'tags': self.tags,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AgentRegistryTable(Base):
+    """SQL таблица для реестра агентов"""
+    __tablename__ = 'agent_registry'
+    __table_args__ = {'schema': 'ai'}
+
+    id = Column(Integer, primary_key=True)
+    registry_id = Column(String(100), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    agent_config = Column(JSONB, nullable=False)  # Упрощенная конфигурация агента
+    is_active = Column(Boolean, nullable=False, default=True)
+    tags = Column(JSONB, nullable=True)  # Массив строк
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертация в словарь"""
+        return {
+            'registry_id': self.registry_id,
+            'name': self.name,
+            'description': self.description,
+            'agent_config': self.agent_config,
+            'is_active': self.is_active,
+            'tags': self.tags,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class HookRegistryTable(Base):
+    """SQL таблица для реестра хуков"""
+    __tablename__ = 'hook_registry'
+    __table_args__ = {'schema': 'ai'}
+
+    id = Column(Integer, primary_key=True)
+    registry_id = Column(String(100), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    hook_type = Column(String(50), nullable=False)  # before_tool_call, after_tool_call, on_tool_error
+    module_path = Column(String(500), nullable=False)
+    function_name = Column(String(255), nullable=False)
+    config = Column(JSONB, nullable=True)  # Конфигурация хука
+    is_active = Column(Boolean, nullable=False, default=True)
+    tags = Column(JSONB, nullable=True)  # Массив строк
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    def get_hook_config(self) -> Optional[Any]:
+        """Получить Pydantic модель из данных таблицы"""
+        try:
+            from db.registry_models import HookRegistry
+            return HookRegistry(
+                registry_id=self.registry_id,
+                name=self.name,
+                description=self.description,
+                hook_type=self.hook_type,
+                module_path=self.module_path,
+                function_name=self.function_name,
+                config=self.config,
+                is_active=self.is_active,
+                tags=self.tags,
+                created_at=self.created_at,
+                updated_at=self.updated_at,
+            )
+        except Exception as e:
+            print(f"Ошибка создания HookRegistry для {self.registry_id}: {e}")
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертация в словарь"""
+        return {
+            'registry_id': self.registry_id,
+            'name': self.name,
+            'description': self.description,
+            'hook_type': self.hook_type,
+            'module_path': self.module_path,
+            'function_name': self.function_name,
+            'config': self.config,
+            'is_active': self.is_active,
+            'tags': self.tags,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

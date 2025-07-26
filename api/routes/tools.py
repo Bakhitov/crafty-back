@@ -51,6 +51,33 @@ def get_all_tools():
         "total": len(tools)
     }
 
+@tools_router.get("/public")
+def get_public_tools():
+    """Получить все публичные инструменты (is_public=True)"""
+    tools = dynamic_tool_service.get_public_tools()
+    return {
+        "tools": [tool.to_dict() for tool in tools],
+        "total": len(tools)
+    }
+
+@tools_router.get("/company/{company_id}")
+def get_tools_by_company(company_id: str):
+    """Получить все инструменты конкретной компании"""
+    tools = dynamic_tool_service.get_tools_by_company(company_id)
+    return {
+        "tools": [tool.to_dict() for tool in tools],
+        "total": len(tools)
+    }
+
+@tools_router.get("/company/{company_id}/accessible")
+def get_accessible_tools_for_company(company_id: str):
+    """Получить все доступные инструменты для компании (публичные + свои приватные)"""
+    tools = dynamic_tool_service.get_accessible_tools_for_company(company_id)
+    return {
+        "tools": [tool.to_dict() for tool in tools],
+        "total": len(tools)
+    }
+
 @tools_router.get("/{tool_id}")
 def get_tool(tool_id: str):
     """Получить инструмент по ID"""

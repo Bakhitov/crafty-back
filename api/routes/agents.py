@@ -15,6 +15,10 @@ import concurrent.futures
 import json
 import logging
 
+# ⚡ ОПТИМИЗАЦИЯ: Простой кэш агентов в памяти
+_agent_instances_cache = {}
+_cache_ttl = {}
+
 # Agno helpers for sessions
 from agno.app.playground.operator import get_session_title
 from agno.app.playground.schemas import AgentSessionsResponse, AgentRenameRequest
@@ -22,6 +26,35 @@ from agno.storage.session.agent import AgentSession
 from agno.app.playground.schemas import MemoryResponse  # Добавлено для ответа воспоминаний
 
 logger = getLogger(__name__)
+
+# ⚡ ОПТИМИЗАЦИЯ: Функция для получения кэшированного агента
+async def get_cached_agent_instance(agent_id: str, **kwargs):
+    """Получить кэшированный экземпляр агента для лучшей производительности"""
+    import time
+    
+    cache_key = f"{agent_id}_{hash(str(sorted(kwargs.items())))}"
+    current_time = time.time()
+    
+    # Проверяем кэш (TTL 5 минут)
+    if cache_key in _agent_instances_cache:
+        if current_time - _cache_ttl.get(cache_key, 0) < 300:  # 5 минут
+            logger.debug(f"⚡ Используем кэшированный экземпляр агента {agent_id}")
+            return _agent_instances_cache[cache_key]
+        else:
+            # Удаляем устаревший кэш
+            _agent_instances_cache.pop(cache_key, None)
+            _cache_ttl.pop(cache_key, None)
+    
+    # Создаем новый экземпляр
+    agent_instance = await dynamic_agent_service.get_agent_instance_async(agent_id, **kwargs)
+    
+    # Кэшируем результат
+    if agent_instance:
+        _agent_instances_cache[cache_key] = agent_instance
+        _cache_ttl[cache_key] = current_time
+        logger.debug(f"⚡ Кэшируем экземпляр агента {agent_id}")
+    
+    return agent_instance
 
 ######################################################
 ## Routes for the Dynamic Agent Interface
@@ -55,7 +88,7 @@ class Model(str, Enum):
 
 
 class AgentResponse(BaseModel):
-    """Модель ответа для агента с полной конфигурацией"""
+    """Модель ответа для агента без дублирования полей"""
     id: int
     name: str
     agent_id: str
@@ -63,10 +96,12 @@ class AgentResponse(BaseModel):
     instructions: Optional[str] = None
     is_active: bool
     is_active_api: bool
+    is_public: Optional[bool] = False
+    company_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     
-    # Основные конфигурации (соответствуют полям БД)
+    # Основные конфигурации (соответствуют JSONB полям БД)
     model_configuration: Optional[Dict[str, Any]] = None
     tools_config: Optional[Dict[str, Any]] = None
     knowledge_config: Optional[Dict[str, Any]] = None
@@ -75,19 +110,7 @@ class AgentResponse(BaseModel):
     reasoning_config: Optional[Dict[str, Any]] = None
     team_config: Optional[Dict[str, Any]] = None
     
-    # Дополнительные конфигурации (из settings)
-    system_message_config: Optional[Dict[str, Any]] = None
-    user_message_config: Optional[Dict[str, Any]] = None
-    context_config: Optional[Dict[str, Any]] = None
-    history_config: Optional[Dict[str, Any]] = None
-    response_config: Optional[Dict[str, Any]] = None
-    streaming_config: Optional[Dict[str, Any]] = None
-    debug_config: Optional[Dict[str, Any]] = None
-    extra_config: Optional[Dict[str, Any]] = None
-    config_version: Optional[str] = None
-    tags: Optional[List[str]] = None
-    
-    # Полные settings для дополнительных параметров
+    # Все дополнительные настройки в едином объекте settings (без дублирования)
     settings: Optional[Dict[str, Any]] = None
 
 
@@ -97,8 +120,10 @@ class CreateAgentRequest(BaseModel):
     agent_id: str
     description: Optional[str] = None
     instructions: Optional[str] = None
+    is_public: Optional[bool] = False
+    company_id: Optional[str] = None
     
-    # Основные конфигурации (соответствуют полям БД)
+    # Основные конфигурации (соответствуют JSONB полям БД)
     model_configuration: Optional[Dict[str, Any]] = None
     tools_config: Optional[Dict[str, Any]] = None
     knowledge_config: Optional[Dict[str, Any]] = None
@@ -107,19 +132,7 @@ class CreateAgentRequest(BaseModel):
     reasoning_config: Optional[Dict[str, Any]] = None
     team_config: Optional[Dict[str, Any]] = None
     
-    # Дополнительные конфигурации (будут сохранены в settings)
-    system_message_config: Optional[Dict[str, Any]] = None
-    user_message_config: Optional[Dict[str, Any]] = None
-    context_config: Optional[Dict[str, Any]] = None
-    history_config: Optional[Dict[str, Any]] = None
-    response_config: Optional[Dict[str, Any]] = None
-    streaming_config: Optional[Dict[str, Any]] = None
-    debug_config: Optional[Dict[str, Any]] = None
-    extra_config: Optional[Dict[str, Any]] = None
-    config_version: Optional[str] = "1.0"
-    tags: Optional[List[str]] = None
-    
-    # ✅ ИЗМЕНЕНО: унифицируем имя поля на 'settings'
+    # Все дополнительные настройки в едином объекте settings
     settings: Optional[Dict[str, Any]] = None
 
 
@@ -128,8 +141,10 @@ class UpdateAgentRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[str] = None
+    is_public: Optional[bool] = None
+    company_id: Optional[str] = None
     
-    # Основные конфигурации (соответствуют полям БД)
+    # Основные конфигурации (соответствуют JSONB полям БД)
     model_configuration: Optional[Dict[str, Any]] = None
     tools_config: Optional[Dict[str, Any]] = None
     knowledge_config: Optional[Dict[str, Any]] = None
@@ -138,26 +153,14 @@ class UpdateAgentRequest(BaseModel):
     reasoning_config: Optional[Dict[str, Any]] = None
     team_config: Optional[Dict[str, Any]] = None
     
-    # Дополнительные конфигурации (будут сохранены в settings)
-    system_message_config: Optional[Dict[str, Any]] = None
-    user_message_config: Optional[Dict[str, Any]] = None
-    context_config: Optional[Dict[str, Any]] = None
-    history_config: Optional[Dict[str, Any]] = None
-    response_config: Optional[Dict[str, Any]] = None
-    streaming_config: Optional[Dict[str, Any]] = None
-    debug_config: Optional[Dict[str, Any]] = None
-    extra_config: Optional[Dict[str, Any]] = None
-    config_version: Optional[str] = None
-    tags: Optional[List[str]] = None
-    
-    # ✅ ИЗМЕНЕНО: унифицируем имя поля на 'settings'
+    # Все дополнительные настройки в едином объекте settings
     settings: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
     is_active_api: Optional[bool] = None
 
 
 def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
-    """Построить полный ответ агента со всеми конфигурациями"""
+    """Построить полный ответ агента без дублирования полей"""
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -166,10 +169,12 @@ def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
         instructions=agent.instructions,
         is_active=agent.is_active,
         is_active_api=agent.is_active_api,
+        is_public=agent.is_public,
+        company_id=agent.company_id,
         created_at=agent.created_at.isoformat() if agent.created_at else None,
         updated_at=agent.updated_at.isoformat() if agent.updated_at else None,
         
-        # Основные конфигурации
+        # Основные конфигурации (из JSONB полей БД)
         model_configuration=agent.model_configuration,
         tools_config=agent.tools_config,
         knowledge_config=agent.knowledge_config,
@@ -178,55 +183,12 @@ def _build_agent_response(agent: DynamicAgent) -> AgentResponse:
         reasoning_config=agent.reasoning_config,
         team_config=agent.team_config,
         
-        # Дополнительные конфигурации из settings
-        system_message_config=agent.get_system_message_config(),
-        user_message_config=agent.get_user_message_config(),
-        context_config=agent.get_context_config(),
-        history_config=agent.get_history_config(),
-        response_config=agent.get_response_config(),
-        streaming_config=agent.get_streaming_config(),
-        debug_config=agent.get_debug_config(),
-        extra_config=agent.get_extra_config(),
-        config_version=agent.get_config_version(),
-        tags=agent.get_tags(),
-        
-        # Полные settings для дополнительных параметров
+        # Полные settings (без дублирования через отдельные методы)
         settings=agent.settings
     )
 
 
-def _prepare_agent_data(agent_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Собирает все разрозненные конфигурационные поля в единый словарь 'settings'.
-    Приоритет отдается более специфичным полям (например, `config_version`)
-    над общим объектом `settings`.
-    """
-    
-    # 1. Начинаем с объекта 'settings', если он был передан.
-    final_settings = agent_data.pop('settings', None) or {}
 
-    # 2. "Сплющиваем" поля-конфиги, перезаписывая значения в 'final_settings'.
-    setting_keys_to_merge = [
-        'system_message_config', 'user_message_config', 'context_config',
-        'history_config', 'response_config', 'streaming_config',
-        'debug_config', 'extra_config'
-    ]
-    for key in setting_keys_to_merge:
-        config_dict = agent_data.pop(key, None)
-        if isinstance(config_dict, dict):
-            final_settings.update(config_dict)
-
-    # 3. Переносим простые поля, перезаписывая значения в 'final_settings'.
-    simple_setting_keys_to_move = ['config_version', 'tags']
-    for key in simple_setting_keys_to_move:
-        if key in agent_data:
-            final_settings[key] = agent_data.pop(key)
-
-    # 4. Возвращаем 'final_settings' в основной словарь.
-    if final_settings:
-        agent_data['settings'] = final_settings
-                
-    return agent_data
 
 
 @agents_router.get("", response_model=List[str])
@@ -263,6 +225,89 @@ async def list_agents_detailed():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve detailed agent information"
+        )
+
+@agents_router.get("/search")
+async def search_agents(query: Optional[str] = Query(None), tags: Optional[str] = Query(None)):
+    """
+    Поиск агентов по запросу и тегам.
+    
+    Args:
+        query: Поисковый запрос (по имени, описанию, ID)
+        tags: Теги через запятую
+    
+    Returns:
+        List[AgentResponse]: Найденные агенты
+    """
+    try:
+        tags_list = tags.split(',') if tags else None
+        agents = dynamic_agent_service.search_agents(query=query, tags=tags_list)
+        return [_build_agent_response(agent) for agent in agents]
+    except Exception as e:
+        logger.error(f"Error searching agents: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to search agents"
+        )
+
+@agents_router.get("/public", response_model=List[AgentResponse])
+async def get_public_agents():
+    """
+    Получить всех публичных агентов (is_public=True).
+    
+    Returns:
+        List[AgentResponse]: Публичные агенты
+    """
+    try:
+        agents = dynamic_agent_service.get_public_agents()
+        return [_build_agent_response(agent) for agent in agents]
+    except Exception as e:
+        logger.error(f"Error getting public agents: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve public agents"
+        )
+
+@agents_router.get("/company/{company_id}", response_model=List[AgentResponse])
+async def get_agents_by_company(company_id: str):
+    """
+    Получить всех агентов конкретной компании.
+    
+    Args:
+        company_id: ID компании
+    
+    Returns:
+        List[AgentResponse]: Агенты компании
+    """
+    try:
+        agents = dynamic_agent_service.get_agents_by_company(company_id)
+        return [_build_agent_response(agent) for agent in agents]
+    except Exception as e:
+        logger.error(f"Error getting agents for company {company_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve agents for company {company_id}"
+        )
+
+@agents_router.get("/company/{company_id}/accessible", response_model=List[AgentResponse])
+async def get_accessible_agents_for_company(company_id: str):
+    """
+    Получить всех доступных агентов для компании (публичные + свои приватные).
+    
+    Args:
+        company_id: ID компании
+    
+    Returns:
+        List[AgentResponse]: Доступные агенты для компании
+    """
+    try:
+        agents = dynamic_agent_service.get_accessible_agents_for_company(company_id)
+        return [_build_agent_response(agent) for agent in agents]
+    except Exception as e:
+        logger.error(f"Error getting accessible agents for company {company_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve accessible agents for company {company_id}"
         )
 
 
@@ -310,9 +355,6 @@ async def create_agent(request: CreateAgentRequest):
     try:
         agent_data = request.dict(exclude_none=True)
         
-        # ✅ ИСПРАВЛЕНИЕ: Собираем все настройки в один объект
-        agent_data = _prepare_agent_data(agent_data)
-        
         agent = dynamic_agent_service.create_agent(agent_data)
         
         return _build_agent_response(agent)
@@ -343,9 +385,6 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
     """
     try:
         agent_data = request.dict(exclude_none=True)
-        
-        # ✅ ИСПРАВЛЕНИЕ: Собираем все настройки в один объект
-        agent_data = _prepare_agent_data(agent_data)
         
         agent = dynamic_agent_service.update_agent(agent_id, agent_data)
         
@@ -855,7 +894,8 @@ async def cleanup_expired_cache():
 async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
     """Получить список всех сессий агента"""
     try:
-        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        # ⚡ ОПТИМИЗАЦИЯ: Используем кэшированный экземпляр агента
+        agno_agent = await get_cached_agent_instance(agent_id)
         if agno_agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
@@ -886,7 +926,8 @@ async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(N
 async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
     """Получить конкретную сессию агента"""
     try:
-        agno_agent = await dynamic_agent_service.get_agent_instance_async(agent_id)
+        # ⚡ ОПТИМИЗАЦИЯ: Используем кэшированный экземпляр агента
+        agno_agent = await get_cached_agent_instance(agent_id)
         if agno_agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 

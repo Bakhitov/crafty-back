@@ -1,7 +1,6 @@
 """
 Упрощенный сервис для работы с динамическими агентами.
-Прямая интеграция с Agno без избыточных абстракций.
-Лаконичная и легковесная реализация.
+Прямая интеграция с Agno, минимум абстракций.
 """
 
 import logging
@@ -22,6 +21,9 @@ from db.session import SessionLocal
 from db.services.dynamic_tool_service import dynamic_tool_service
 from db.url import get_db_url
 
+# === НОВЫЙ ИМПОРТ ДЛЯ РЕЕСТРОВ ===
+from db.services.registry_service import registry_service
+
 # Прямой импорт Agno (изолированный в одном месте)
 try:
     from agno.agent import Agent
@@ -30,6 +32,7 @@ try:
     from agno.storage.agent.postgres import PostgresAgentStorage
     from agno.knowledge import AgentKnowledge
     from agno.media import Audio, File as FileMedia, Image, Video
+    from agno.run.response import RunEvent  # ✅ ИСПРАВЛЕНИЕ: Импортируем RunEvent
     AGNO_AVAILABLE = True
     print("Agno успешно импортирован")
 except ImportError as e:
@@ -125,7 +128,7 @@ class DynamicAgentService:
     Прямая интеграция с Agno, минимум абстракций.
     """
     
-    def __init__(self, cache_ttl: int = 300):
+    def __init__(self, cache_ttl: int = 900):  # ⚡ ОПТИМИЗАЦИЯ: Увеличен TTL с 300 до 900 секунд
         self.db_session = SessionLocal
         self.db_url = get_db_url()
         self.cache = AgentCache(ttl_seconds=cache_ttl)
@@ -190,7 +193,10 @@ class DynamicAgentService:
                 team_config=agent_data.get('team_config'),
                 settings=agent_data.get('settings'),
                 is_active=agent_data.get('is_active', True),
-                is_active_api=agent_data.get('is_active_api', True)
+                is_active_api=agent_data.get('is_active_api', True),
+                is_public=agent_data.get('is_public', False),
+                company_id=agent_data.get('company_id'),
+                photo=agent_data.get('photo')
             )
             
             session.add(agent)
@@ -327,6 +333,30 @@ class DynamicAgentService:
                 except Exception as e:
                     raise ValueError(f"Ошибка обработки {config_key}: {e}")
     
+    # === НОВЫЙ МЕТОД ОПТИМИЗАЦИИ ===
+    
+    def preload_agent_cache(self, agent_ids: Optional[List[str]] = None) -> None:
+        """⚡ ОПТИМИЗАЦИЯ: Предварительная загрузка кэша агентов для быстрого доступа"""
+        try:
+            if agent_ids is None:
+                # Загружаем все активные агенты
+                agents = self.get_all_active_agents()
+            else:
+                # Загружаем только указанные агенты
+                agents = [self.get_agent_by_id(agent_id) for agent_id in agent_ids if self.get_agent_by_id(agent_id)]
+            
+            logger.info(f"⚡ Предварительная загрузка кэша для {len(agents)} агентов")
+            
+            # Заполняем кэш
+            for agent in agents:
+                if agent:
+                    self.cache.set(agent.agent_id, agent)
+                    
+            logger.info(f"✅ Кэш предварительно загружен для {len(agents)} агентов")
+            
+        except Exception as e:
+            logger.error(f"Ошибка предварительной загрузки кэша: {e}")
+    
     # === Выполнение агентов ===
     
     async def run_agent(self, agent_id: str, message: str, **kwargs) -> Union[str, AsyncGenerator[str, None]]:
@@ -446,7 +476,18 @@ class DynamicAgentService:
             if not model_id.startswith('o3') and 'reasoning_effort' in model_params:
                 unsupported.add('reasoning_effort')
             
+            # ✅ ИСПРАВЛЕНИЕ: metadata требует store=True
+            if 'metadata' in model_params and not model_params.get('store', False):
+                logger.warning(f"Параметр 'metadata' удален для модели {model_id}, так как 'store' не включен")
+                unsupported.add('metadata')
+            
             filtered_params = {k: v for k, v in model_params.items() if k not in unsupported}
+            
+            # ✅ Дополнительная проверка логики store/metadata
+            if filtered_params.get('metadata') and not filtered_params.get('store'):
+                logger.warning(f"Отключаем metadata для модели {model_id} - store=False")
+                filtered_params.pop('metadata', None)
+            
             return OpenAIChat(id=model_id, **filtered_params)
             
         elif model_id.startswith('claude-'):
@@ -479,6 +520,59 @@ class DynamicAgentService:
                           'reasoning_effort', 'system_message_role', 'add_images_to_message_content'}
             filtered_params = {k: v for k, v in model_params.items() if k not in unsupported}
             return OpenAIChat(id=model_id, **filtered_params)
+
+    def _convert_events_to_skip(self, events_strings: Optional[List[str]]) -> Optional[List[Any]]:
+        """
+        ✅ ИСПРАВЛЕНИЕ: Преобразовать строки в RunEvent объекты.
+        Поддерживаемые события из agno.run.response.RunEvent
+        """
+        if not events_strings or not AGNO_AVAILABLE:
+            return None
+        
+        try:
+            run_events = []
+            valid_events = []
+            
+            for event_str in events_strings:
+                event_found = False
+                
+                try:
+                    # Точное соответствие по значению или имени
+                    for run_event in RunEvent:
+                        if (run_event.value.lower() == event_str.lower() or 
+                            run_event.name.lower() == event_str.lower()):
+                            run_events.append(run_event)
+                            valid_events.append(f"{run_event.name}({run_event.value})")
+                            event_found = True
+                            break
+                    
+                    # Частичное соответствие если не нашли точное
+                    if not event_found:
+                        for run_event in RunEvent:
+                            if (event_str.lower() in run_event.value.lower() or 
+                                event_str.lower() in run_event.name.lower()):
+                                run_events.append(run_event)
+                                valid_events.append(f"{run_event.name}({run_event.value})")
+                                event_found = True
+                                break
+                    
+                    if not event_found:
+                        logger.warning(f"Неизвестное событие для пропуска: '{event_str}'. "
+                                     f"Доступные: {[e.value for e in RunEvent]}")
+                        
+                except Exception as e:
+                    logger.error(f"Ошибка обработки события '{event_str}': {e}")
+            
+            if run_events:
+                logger.debug(f"✅ Настроены события для пропуска: {valid_events}")
+                return run_events
+            else:
+                logger.warning("Не найдено валидных событий для пропуска")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Критическая ошибка преобразования events_to_skip: {e}")
+            return None
 
     async def _build_agno_agent_async(self, dynamic_agent: DynamicAgent, **kwargs) -> Agent:
         """✅ ПРАВИЛЬНЫЙ асинхронный метод создания Agno Agent с MCP поддержкой"""
@@ -589,7 +683,16 @@ class DynamicAgentService:
         if settings:
             # 🛡️ Системное решение: используем безопасную модель для фильтрации
             safe_settings = AgnoAgentSettings(**settings.dict(exclude_none=True))
-            agent_params.update(safe_settings.dict(exclude_none=True))
+            safe_dict = safe_settings.dict(exclude_none=True)
+            
+            # ✅ ИСПРАВЛЕНИЕ: Правильно обрабатываем events_to_skip
+            if 'events_to_skip' in safe_dict:
+                events_to_skip_strings = safe_dict.pop('events_to_skip')  # Убираем из словаря
+                converted_events = self._convert_events_to_skip(events_to_skip_strings)
+                if converted_events:
+                    agent_params['events_to_skip'] = converted_events
+            
+            agent_params.update(safe_dict)
         
         # === ПЕРЕОПРЕДЕЛЕНИЯ ===
         excluded_params = {'model_override', 'files', 'stream', 'user_id', 'session_id', 'stop_after_tool_call'}
@@ -688,7 +791,16 @@ class DynamicAgentService:
         if settings:
             # 🛡️ Системное решение: используем безопасную модель для фильтрации
             safe_settings = AgnoAgentSettings(**settings.dict(exclude_none=True))
-            agent_params.update(safe_settings.dict(exclude_none=True))
+            safe_dict = safe_settings.dict(exclude_none=True)
+            
+            # ✅ ИСПРАВЛЕНИЕ: Правильно обрабатываем events_to_skip
+            if 'events_to_skip' in safe_dict:
+                events_to_skip_strings = safe_dict.pop('events_to_skip')  # Убираем из словаря
+                converted_events = self._convert_events_to_skip(events_to_skip_strings)
+                if converted_events:
+                    agent_params['events_to_skip'] = converted_events
+            
+            agent_params.update(safe_dict)
 
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         agent_params.update(overrides)
@@ -708,6 +820,15 @@ class DynamicAgentService:
         storage_conf = StorageConfig(**storage_config)
         if storage_conf.storage_type in {"postgres", "postgresql"}:
             try:
+                # ⚡ ОПТИМИЗАЦИЯ: Кэшируем storage по конфигурации
+                storage_key = f"storage_{hash(str(storage_config))}"
+                if hasattr(self, '_storage_cache'):
+                    cached_storage = self._storage_cache.get(storage_key)
+                    if cached_storage:
+                        return cached_storage
+                else:
+                    self._storage_cache = {}
+                
                 # 🛡️ Системное решение: используем безопасную модель для фильтрации
                 safe_params = AgnoStorageParams(**storage_conf.dict(by_alias=True))
                 # ✅ Используем by_alias=True, чтобы получить 'schema', а не 'db_schema'
@@ -721,7 +842,11 @@ class DynamicAgentService:
                     storage_params['schema'] = 'ai' # значение по-умолчанию
 
                 logger.debug(f"Creating PostgresAgentStorage with params: {storage_params}")
-                return PostgresAgentStorage(**storage_params)
+                storage_instance = PostgresAgentStorage(**storage_params)
+                
+                # ⚡ Кэшируем результат
+                self._storage_cache[storage_key] = storage_instance
+                return storage_instance
             except Exception as e:
                 logger.error(f"Failed to initialize PostgresAgentStorage: {e}")
                 raise ValueError(f"Ошибка конфигурации хранилища: {e}")
@@ -859,8 +984,8 @@ class DynamicAgentService:
 
         for server_id in server_ids:
             try:
-                # Пытаемся создать MCP-инструмент, но не более 3 сек, иначе пропускаем
-                async with anyio.fail_after(10):
+                # ⚡ ОПТИМИЗАЦИЯ: Сокращаем таймаут с 10 до 3 секунд для быстрой работы
+                async with anyio.fail_after(3):
                     mcp_tools = await mcp_service.create_tool_instance_async(server_id)
                 if mcp_tools:
                     tool_instances.append(mcp_tools)
@@ -885,6 +1010,70 @@ class DynamicAgentService:
         """
         # Возвращаем пустой словарь для обратной совместимости
         return {}
+
+    # === НОВЫЕ МЕТОДЫ ДЛЯ РАЗРЕШЕНИЯ СЛОЖНЫХ ОБЪЕКТОВ ===
+    
+    def _resolve_reasoning_config_objects(self, reasoning_config: ReasoningConfig) -> ReasoningConfig:
+        """Разрешить сложные объекты в reasoning конфигурации"""
+        if not reasoning_config:
+            return reasoning_config
+        
+        resolved_config = reasoning_config.dict()
+        
+        # Разрешить reasoning_model
+        if reasoning_config.reasoning_model:
+            model_instance = registry_service.resolve_model_reference(reasoning_config.reasoning_model)
+            if model_instance:
+                resolved_config['reasoning_model'] = model_instance
+            else:
+                print(f"⚠️ Не удалось разрешить reasoning_model: {reasoning_config.reasoning_model}")
+                resolved_config['reasoning_model'] = None
+        
+        # Разрешить reasoning_agent
+        if reasoning_config.reasoning_agent:
+            agent_instance = registry_service.resolve_agent_reference(reasoning_config.reasoning_agent)
+            if agent_instance:
+                resolved_config['reasoning_agent'] = agent_instance
+            else:
+                print(f"⚠️ Не удалось разрешить reasoning_agent: {reasoning_config.reasoning_agent}")
+                resolved_config['reasoning_agent'] = None
+        
+        return ReasoningConfig(**resolved_config)
+    
+    def _resolve_team_config_objects(self, team_config: TeamConfig) -> TeamConfig:
+        """Разрешить сложные объекты в team конфигурации"""
+        if not team_config:
+            return team_config
+        
+        resolved_config = team_config.dict()
+        
+        # Разрешить team (список агентов)
+        if team_config.team:
+            resolved_team = []
+            for agent_ref in team_config.team:
+                agent_instance = registry_service.resolve_agent_reference(agent_ref)
+                if agent_instance:
+                    resolved_team.append(agent_instance)
+                else:
+                    print(f"⚠️ Не удалось разрешить агента в команде: {agent_ref}")
+            
+            resolved_config['team'] = resolved_team if resolved_team else None
+        
+        return TeamConfig(**resolved_config)
+    
+    def _resolve_tool_hooks(self, tools_config: ToolsConfig) -> List[callable]:
+        """Разрешить tool_hooks в список callable функций"""
+        if not tools_config or not tools_config.tool_hooks:
+            return []
+        
+        return registry_service.resolve_tool_hooks_list(tools_config.tool_hooks)
+    
+    def _resolve_parser_model(self, settings: AgentSettings) -> Optional[Any]:
+        """Разрешить parser_model в agno.Model объект"""
+        if not settings or not settings.parser_model:
+            return None
+        
+        return registry_service.resolve_model_reference(settings.parser_model)
     
     async def _process_files_for_agent(self, message: str, files: List) -> Union[str, Tuple[str, Dict[str, List]]]:
         """Обработка файлов для агента с разделением на изображения и документы"""
@@ -1018,6 +1207,57 @@ class DynamicAgentService:
                 )
             
             return query_obj.order_by(DynamicAgent.created_at.desc()).all()
+    
+    def get_agents_by_company(self, company_id: str) -> List[DynamicAgent]:
+        """Получить агентов по ID компании"""
+        with self.db_session() as session:
+            return session.query(DynamicAgent).filter(
+                and_(
+                    DynamicAgent.company_id == company_id,
+                    DynamicAgent.is_active == True
+                )
+            ).order_by(DynamicAgent.created_at.desc()).all()
+    
+    def get_public_agents(self) -> List[DynamicAgent]:
+        """Получить публичных агентов (is_public=True) - видны всем"""
+        with self.db_session() as session:
+            return session.query(DynamicAgent).filter(
+                and_(
+                    DynamicAgent.is_public == True,
+                    DynamicAgent.is_active == True
+                )
+            ).order_by(DynamicAgent.name).all()
+    
+    def get_private_agents_by_company(self, company_id: str) -> List[DynamicAgent]:
+        """Получить приватных агентов конкретной компании (is_public=False)"""
+        with self.db_session() as session:
+            return session.query(DynamicAgent).filter(
+                and_(
+                    DynamicAgent.company_id == company_id,
+                    DynamicAgent.is_public == False,
+                    DynamicAgent.is_active == True
+                )
+            ).order_by(DynamicAgent.created_at.desc()).all()
+    
+    def get_accessible_agents_for_company(self, company_id: str) -> List[DynamicAgent]:
+        """
+        Получить агентов доступных для компании:
+        - Публичные агенты (is_public=True) - видны всем
+        - Приватные агенты своей компании (is_public=False AND company_id=user_company)
+        """
+        with self.db_session() as session:
+            return session.query(DynamicAgent).filter(
+                and_(
+                    or_(
+                        DynamicAgent.is_public == True,  # Публичные агенты - видны всем
+                        and_(
+                            DynamicAgent.is_public == False,  # Приватные агенты
+                            DynamicAgent.company_id == company_id  # Только своей компании
+                        )
+                    ),
+                    DynamicAgent.is_active == True  # Только активные (техническое поле)
+                )
+            ).order_by(DynamicAgent.name).all() 
 
 
 # Глобальный экземпляр сервиса
