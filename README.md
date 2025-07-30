@@ -20,7 +20,7 @@ git clone https://github.com/agno-agi/agent-api.git
 cd agent-api
 ```
 
-### Configure API keys
+### Configure API keys and Database
 
 We use GPT 4.1 as the default model, please export the `OPENAI_API_KEY` environment variable to get started.
 
@@ -29,6 +29,26 @@ export OPENAI_API_KEY="YOUR_API_KEY_HERE"
 ```
 
 > **Note**: You can use any model provider, just update the agents in the `/agents` folder.
+
+### Database Configuration
+
+The application uses cloud databases for both development and production:
+
+```sh
+# Copy example.env to .env and update with your database credentials
+cp example.env .env
+
+# Edit .env file with your database connection details:
+# DB_URL=postgresql://username:password@host:port/database
+```
+
+Supported cloud databases:
+- **Supabase** (recommended - includes pgvector support)
+- **AWS RDS** with pgvector extension
+- **Google Cloud SQL** for PostgreSQL
+- **Azure Database for PostgreSQL**
+
+The application will automatically detect and use `DB_URL` if provided, otherwise it will fall back to individual DB variables.
 
 ### Start the application
 
@@ -40,7 +60,7 @@ docker compose up -d
 
 This command starts:
 * The **FastAPI server**, running on [http://localhost:8000](http://localhost:8000).
-* The **PostgreSQL database**, accessible on `localhost:5432`.
+* Connects to your configured cloud database.
 
 Once started, you can:
 * Test the API at [http://localhost:8000/docs](http://localhost:8000/docs).
@@ -190,5 +210,14 @@ The general process to run in production is:
   The specific deployment steps will vary depending on the chosen provider. Generally, you'll point the service to your container image in the registry and configure aspects like port mapping (the application runs on port 8000 by default inside the container), environment variables, scaling parameters, and any necessary database connections.
 
 4. **Database Configuration**
-  * The default `docker-compose.yml` sets up a PostgreSQL database for local development. In production, you will typically use a managed database service provided by your cloud provider (e.g., AWS RDS, Google Cloud SQL, Azure Database for PostgreSQL) for better reliability, scalability, and manageability.
-  * Ensure your deployed application is configured with the correct database connection URL for your production database instance. This is usually set via an environment variables.
+  * The application supports both local and cloud databases via the `DB_URL` environment variable.
+  * For production, use a managed database service like:
+    - **Supabase** (PostgreSQL with pgvector support)
+    - **AWS RDS** with pgvector extension
+    - **Google Cloud SQL** for PostgreSQL
+    - **Azure Database for PostgreSQL**
+  * Set the `DB_URL` environment variable to your production database connection string:
+    ```
+    DB_URL=postgresql://username:password@host:port/database
+    ```
+  * The application will automatically create the necessary tables and extensions on first startup.

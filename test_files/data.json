@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "name": "Тестовые данные",
+    "version": "1.0.0",
+    "description": "Файл для тестирования обработки JSON агентами agno",
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "users": [
+    {
+      "id": 1,
+      "name": "Иван Петров",
+      "email": "ivan@example.com",
+      "active": true,
+      "roles": ["user", "admin"],
+      "profile": {
+        "age": 28,
+        "city": "Москва",
+        "department": "IT"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Мария Сидорова", 
+      "email": "maria@example.com",
+      "active": false,
+      "roles": ["user"],
+      "profile": {
+        "age": 32,
+        "city": "СПб",
+        "department": "HR"
+      }
+    }
+  ],
+  "settings": {
+    "language": "ru",
+    "timezone": "Europe/Moscow", 
+    "notifications": true,
+    "theme": "dark",
+    "features": {
+      "analytics": true,
+      "reporting": false,
+      "export": true
+    }
+  },
+  "stats": {
+    "total_users": 2,
+    "active_users": 1,
+    "departments": ["IT", "HR"],
+    "created_at": "2024-01-15T10:00:00Z",
+    "last_updated": "2024-07-30T10:00:00Z"
+  }
+}

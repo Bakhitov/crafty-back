@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+- speak russian language
+- always take into account the nature of the project, we have static agents and tools (taken from files) and dynamic (taken from the database), our project is an add-on to agno and we must take into account the structure of agno, if some functionality is missing then we only add from ourselves but not replace agnostic in.
+- you should first of all use the standard agno framerate tools, only if not, then you should do a build (the agno code is in ./.venv/lib/python3.12/site-packages/agno).
+- Rule for applying Alembic migration:
+- Create a Python migration file in the db/migrations/versions/ directory
+- Define upgrade() and downgrade() functions
+- Run the migration: cd db/migrations && alembic upgrade head
+- All the changes you make in the CHANGELOG file, with the name of the file and what you changed or created or deleted.
+- use route v1 in all endpoint
+- docker compose [up -d] if rebuild with new packages [up -d --build] / if stop [down] / if restart [restart] (We have a project in docker and we have to run a test there, project have slow start server, plz delay 1min.)

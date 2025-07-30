@@ -22,10 +22,9 @@
 
 # ignore storage dir
 /storage
-
+/test_files
 # ignore dist dir
 dist
-
 # ignore virtualenvs
 .venv*
 venv*

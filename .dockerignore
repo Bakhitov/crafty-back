@@ -11,10 +11,12 @@
 *.cache*
 *.config*
 *.local*
+/test_files/
 
 # Machine specific
 .idea
 .vscode
+.cursor
 
 # Ignore .env files
 .env

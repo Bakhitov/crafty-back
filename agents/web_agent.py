@@ -12,7 +12,7 @@ from db.session import db_url
 
 
 def get_web_agent(
-    model_id: str = "gpt-4.1",
+    model_id: str = "gpt-4.1-mini-2025-04-14",
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     debug_mode: bool = True,
@@ -75,7 +75,11 @@ def get_web_agent(
         add_state_in_messages=True,
         # -*- Storage -*-
         # Storage chat history and session state in a Postgres table
-        storage=PostgresAgentStorage(table_name="web_search_agent_sessions", db_url=db_url),
+        storage=PostgresAgentStorage(
+            table_name="sessions", 
+            db_url=db_url,
+            schema="public"
+        ),
         # -*- History -*-
         # Send the last 3 messages from the chat history
         add_history_to_messages=True,
@@ -86,7 +90,11 @@ def get_web_agent(
         # Enable agentic memory where the Agent can personalize responses to the user
         memory=Memory(
             model=OpenAIChat(id=model_id),
-            db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
+            db=PostgresMemoryDb(
+                table_name="user_memories", 
+                db_url=db_url,
+                schema="public"
+            ),
             delete_memories=True,
             clear_memories=True,
         ),
