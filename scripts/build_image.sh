@@ -23,8 +23,13 @@ DOCKER_FILE="Dockerfile"
 
 # DockerHub configuration - CHANGE THIS TO YOUR DOCKERHUB USERNAME
 DOCKER_USERNAME="akhanbakhitov777"
+
+# Docker Image Configuration
 IMAGE_NAME="crafty"
 IMAGE_TAG="latest"
+
+# Render.com deployment hook
+RENDER_DEPLOY_HOOK="https://api.render.com/deploy/srv-d1992o3uibrs73bvnum0?key=VJaKPJAXuEU"
 
 # Full image name for DockerHub
 FULL_IMAGE_NAME="${DOCKER_USERNAME}/${IMAGE_NAME}:${IMAGE_TAG}"
