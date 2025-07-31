@@ -29,6 +29,11 @@ class DynamicAgent(Base):
     # Дополнительные настройки агента (memory, storage, knowledge и т.д.)
     agent_config = Column(JSONB, nullable=False, default={})
     
+    # Нативные поля Agno для системного сообщения (опциональные)
+    goal = Column(Text, nullable=True)  # Цель агента (agent.goal)
+    expected_output = Column(Text, nullable=True)  # Ожидаемый результат (agent.expected_output)
+    role = Column(String(255), nullable=True)  # Роль в команде (agent.role)
+    
     # Новые поля для мультитенантности и организации
     is_public = Column(Boolean, default=False, nullable=False, index=True)
     company_id = Column(UUID, nullable=True, index=True)
@@ -51,6 +56,9 @@ class DynamicAgent(Base):
             "system_instructions": self.system_instructions,
             "tool_ids": [str(tid) for tid in (self.tool_ids or [])],
             "agent_config": self.agent_config,
+            "goal": self.goal,
+            "expected_output": self.expected_output,
+            "role": self.role,
             "is_public": self.is_public,
             "company_id": str(self.company_id) if self.company_id else None,
             "photo": self.photo,

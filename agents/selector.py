@@ -131,7 +131,32 @@ def _create_agent_from_db(
     # Модель (как в существующих агентах)
     model_config = dynamic_agent.model_config or {}
     final_model_id = model_id or model_config.get("id", "gpt-4.1-mini-2025-04-14")
-    model = OpenAIChat(id=final_model_id)
+    
+    # Создаем основную модель с полными настройками
+    model_params = {
+        "id": final_model_id,
+        "temperature": model_config.get("temperature"),
+        "max_tokens": model_config.get("max_tokens"),
+        "max_completion_tokens": model_config.get("max_completion_tokens"),
+        "top_p": model_config.get("top_p"),
+        "frequency_penalty": model_config.get("frequency_penalty"),
+        "presence_penalty": model_config.get("presence_penalty"),
+        "seed": model_config.get("seed"),
+        "stop": model_config.get("stop"),
+        "reasoning_effort": model_config.get("reasoning_effort"),
+        "store": model_config.get("store"),
+        "metadata": model_config.get("metadata"),
+        "modalities": model_config.get("modalities"),
+        "audio": model_config.get("audio"),
+        "api_key": model_config.get("api_key"),
+        "organization": model_config.get("organization"),
+        "base_url": model_config.get("base_url"),
+        "timeout": model_config.get("timeout"),
+        "max_retries": model_config.get("max_retries"),
+    }
+    # Убираем None значения
+    model_params = {k: v for k, v in model_params.items() if v is not None}
+    model = OpenAIChat(**model_params)
     
     # Инструменты из БД с кэшированием
     tools = load_tools_for_agent(db, dynamic_agent.tool_ids or [])
@@ -141,73 +166,226 @@ def _create_agent_from_db(
     
     # Storage (как в существующих агентах)
     storage_config = agent_config.get("storage", {})
-    storage_table = storage_config.get("table_name", "sessions")  # Используем общую таблицу sessions
+    storage_table = storage_config.get("table_name", "sessions")
     storage = PostgresAgentStorage(
         table_name=storage_table, 
         db_url=db_url,
-        schema="public"  # Явно указываем схему public
+        schema="public"
     )
     
     # Memory (КРИТИЧНО для continue endpoint!)
     memory = None
-    enable_agentic_memory = False
-    
     memory_config = agent_config.get("memory", {})
     if memory_config.get("enabled", False):
         from agno.memory.v2.db.postgres import PostgresMemoryDb
         from agno.memory.v2.memory import Memory
         
-        memory_table = memory_config.get("table_name", "user_memories")  # Используем общую таблицу памяти
+        memory_table = memory_config.get("table_name", "user_memories")
         memory = Memory(
             model=OpenAIChat(id=final_model_id),
             db=PostgresMemoryDb(
                 table_name=memory_table, 
                 db_url=db_url,
-                schema="public"  # Явно указываем схему public
+                schema="public"
             ),
             delete_memories=memory_config.get("delete_memories", True),
             clear_memories=memory_config.get("clear_memories", True),
         )
-        enable_agentic_memory = agent_config.get("enable_agentic_memory", True)
+    
+    # Knowledge (RAG система)
+    knowledge = None
+    knowledge_config = agent_config.get("knowledge", {})
+    if knowledge_config.get("enabled", False):
+        # Поддержка различных типов знаний
+        knowledge_type = knowledge_config.get("type", "url")
+        if knowledge_type == "url" and knowledge_config.get("urls"):
+            from agno.knowledge.url import UrlKnowledge
+            from agno.vectordb.pgvector import PgVector
+            
+            knowledge = UrlKnowledge(
+                urls=knowledge_config["urls"],
+                vector_db=PgVector(
+                    db_url=db_url,
+                    table_name=knowledge_config.get("table_name", "knowledge"),
+                    schema="public"
+                )
+            )
+        elif knowledge_type == "pdf" and knowledge_config.get("pdf_paths"):
+            from agno.knowledge.pdf import PDFKnowledge
+            from agno.vectordb.pgvector import PgVector
+            
+            knowledge = PDFKnowledge(
+                path=knowledge_config["pdf_paths"],
+                vector_db=PgVector(
+                    db_url=db_url,
+                    table_name=knowledge_config.get("table_name", "knowledge"),
+                    schema="public"
+                )
+            )
+    
+    # Reasoning модель (для сложных рассуждений)
+    reasoning_model = None
+    reasoning_config = agent_config.get("reasoning", {})
+    if reasoning_config.get("enabled", False):
+        reasoning_model_id = reasoning_config.get("model_id", final_model_id)
+        reasoning_model = OpenAIChat(id=reasoning_model_id)
+    
+    # Parser модель (для парсинга ответов)
+    parser_model = None
+    parser_config = agent_config.get("parser", {})
+    if parser_config.get("enabled", False):
+        parser_model_id = parser_config.get("model_id", final_model_id)
+        parser_model = OpenAIChat(id=parser_model_id)
     
     # History настройки
     history_config = agent_config.get("history", {})
-    add_history_to_messages = history_config.get("add_history_to_messages", True)
-    num_history_runs = history_config.get("num_history_runs", 3)
-    read_chat_history = history_config.get("read_chat_history", True)
     
     # Инструкции
     instructions = dynamic_agent.system_instructions or []
     if isinstance(instructions, list):
         instructions = "\n".join(instructions)
     
-    # Другие настройки
-    add_state_in_messages = agent_config.get("add_state_in_messages", True)
-    markdown = agent_config.get("markdown", True)
-    add_datetime_to_instructions = agent_config.get("add_datetime_to_instructions", True)
-    debug_mode = agent_config.get("debug_mode", debug_mode)
+    # Создаем нативный agno Agent с ПОЛНЫМИ конфигурациями
+    agent_params = {
+        # 1. Основные настройки агента
+        "name": dynamic_agent.name,
+        "agent_id": dynamic_agent.agent_id,
+        "model": model,
+        "introduction": agent_config.get("introduction"),
+        
+        # 2. Пользовательские настройки
+        "user_id": user_id,
+        
+        # 3. Настройки сессии
+        "session_id": session_id,
+        "session_name": agent_config.get("session_name"),
+        "session_state": agent_config.get("session_state"),
+        "search_previous_sessions_history": agent_config.get("search_previous_sessions_history", False),
+        "num_history_sessions": agent_config.get("num_history_sessions"),
+        "cache_session": agent_config.get("cache_session", True),
+        
+        # 4. Контекст агента
+        "context": agent_config.get("context"),
+        "add_context": agent_config.get("add_context", False),
+        "resolve_context": agent_config.get("resolve_context", True),
+        
+        # 5. Память агента
+        "memory": memory,
+        "enable_agentic_memory": agent_config.get("enable_agentic_memory", False),
+        "enable_user_memories": agent_config.get("enable_user_memories", False),
+        "add_memory_references": agent_config.get("add_memory_references"),
+        "enable_session_summaries": agent_config.get("enable_session_summaries", False),
+        "add_session_summary_references": agent_config.get("add_session_summary_references"),
+        
+        # 6. История агента
+        "add_history_to_messages": history_config.get("add_history_to_messages", True),
+        "num_history_responses": history_config.get("num_history_responses"),
+        "num_history_runs": history_config.get("num_history_runs", 3),
+        
+        # 7. Знания агента
+        "knowledge": knowledge,
+        "knowledge_filters": agent_config.get("knowledge_filters"),
+        "enable_agentic_knowledge_filters": agent_config.get("enable_agentic_knowledge_filters", False),
+        "add_references": agent_config.get("add_references", False),
+        "retriever": agent_config.get("retriever"),
+        "references_format": agent_config.get("references_format", "json"),
+        
+        # 8. Хранилище агента
+        "storage": storage,
+        "extra_data": agent_config.get("extra_data"),
+        
+        # 9. Инструменты агента
+        "tools": tools,
+        "show_tool_calls": agent_config.get("show_tool_calls", True),
+        "tool_call_limit": agent_config.get("tool_call_limit"),
+        "tool_choice": agent_config.get("tool_choice"),
+        "tool_hooks": agent_config.get("tool_hooks"),
+        
+        # 9.2 Стандартные инструменты
+        "read_chat_history": history_config.get("read_chat_history", True),
+        "search_knowledge": agent_config.get("search_knowledge", True),
+        "update_knowledge": agent_config.get("update_knowledge", False),
+        "read_tool_call_history": agent_config.get("read_tool_call_history", False),
+        
+        # 10. Рассуждения агента
+        "reasoning": reasoning_config.get("enabled", False),
+        "reasoning_model": reasoning_model,
+        "reasoning_agent": agent_config.get("reasoning_agent"),
+        "reasoning_min_steps": reasoning_config.get("min_steps", 1),
+        "reasoning_max_steps": reasoning_config.get("max_steps", 10),
+        
+        # 11. Системные сообщения
+        "system_message": agent_config.get("system_message"),
+        "system_message_role": agent_config.get("system_message_role", "system"),
+        "create_default_system_message": agent_config.get("create_default_system_message", True),
+        
+        # 11.2 Построение системного сообщения
+        "description": dynamic_agent.description,
+        "goal": dynamic_agent.goal or agent_config.get("goal"),  # Приоритет: DB поле -> agent_config
+        "instructions": instructions,
+        "expected_output": dynamic_agent.expected_output or agent_config.get("expected_output"),  # Приоритет: DB поле -> agent_config
+        "additional_context": agent_config.get("additional_context"),
+        "markdown": agent_config.get("markdown", True),
+        "add_name_to_instructions": agent_config.get("add_name_to_instructions", False),
+        "add_datetime_to_instructions": agent_config.get("add_datetime_to_instructions", True),
+        "add_location_to_instructions": agent_config.get("add_location_to_instructions", False),
+        "timezone_identifier": agent_config.get("timezone_identifier"),
+        "add_state_in_messages": agent_config.get("add_state_in_messages", True),
+        
+        # 12. Дополнительные сообщения
+        "add_messages": agent_config.get("add_messages"),
+        "success_criteria": agent_config.get("success_criteria"),
+        
+        # 13. Пользовательские сообщения
+        "user_message": agent_config.get("user_message"),
+        "user_message_role": agent_config.get("user_message_role", "user"),
+        "create_default_user_message": agent_config.get("create_default_user_message", True),
+        
+        # 14. Настройки ответа агента
+        "retries": agent_config.get("retries", 0),
+        "delay_between_retries": agent_config.get("delay_between_retries", 1),
+        "exponential_backoff": agent_config.get("exponential_backoff", False),
+        
+        # 14.2 Модель ответа и парсинг
+        "response_model": agent_config.get("response_model"),
+        "parser_model": parser_model,
+        "parser_model_prompt": parser_config.get("prompt"),
+        "parse_response": agent_config.get("parse_response", True),
+        "structured_outputs": agent_config.get("structured_outputs"),
+        "use_json_mode": agent_config.get("use_json_mode", False),
+        "save_response_to_file": agent_config.get("save_response_to_file"),
+        
+        # 15. Потоковая передача
+        "stream": agent_config.get("stream"),
+        "stream_intermediate_steps": agent_config.get("stream_intermediate_steps", False),
+        "store_events": agent_config.get("store_events", False),
+        "events_to_skip": agent_config.get("events_to_skip"),
+        
+        # 16. Команда агентов
+        "team": agent_config.get("team"),
+        "team_data": agent_config.get("team_data"),
+        "role": dynamic_agent.role or agent_config.get("role"),  # Приоритет: DB поле -> agent_config
+        "respond_directly": agent_config.get("respond_directly", False),
+        "add_transfer_instructions": agent_config.get("add_transfer_instructions", True),
+        "team_response_separator": agent_config.get("team_response_separator", "\n"),
+        "team_session_id": agent_config.get("team_session_id"),
+        "team_id": agent_config.get("team_id"),
+        "team_session_state": agent_config.get("team_session_state"),
+        
+        # 17. Приложение и Workflow
+        "app_id": agent_config.get("app_id"),
+        "workflow_id": agent_config.get("workflow_id"),
+        "workflow_session_id": agent_config.get("workflow_session_id"),
+        "workflow_session_state": agent_config.get("workflow_session_state"),
+        
+        # 18. Отладка и мониторинг
+        "debug_mode": agent_config.get("debug_mode", debug_mode),
+        "debug_level": agent_config.get("debug_level", 1),
+        "monitoring": agent_config.get("monitoring", False),
+        "telemetry": agent_config.get("telemetry", True),
+    }
     
-    # Создаем нативный agno Agent с полными конфигурациями
-    return Agent(
-        name=dynamic_agent.name,
-        agent_id=dynamic_agent.agent_id,
-        user_id=user_id,
-        session_id=session_id,
-        model=model,
-        tools=tools,  # Нативные agno инструменты
-        description=dynamic_agent.description,
-        instructions=instructions,
-        storage=storage,
-        # -*- Memory (критично для continue endpoint) -*-
-        memory=memory,
-        enable_agentic_memory=enable_agentic_memory,
-        # -*- History -*-
-        add_history_to_messages=add_history_to_messages,
-        num_history_runs=num_history_runs,
-        read_chat_history=read_chat_history,
-        # -*- Other settings -*-
-        add_state_in_messages=add_state_in_messages,
-        markdown=markdown,
-        add_datetime_to_instructions=add_datetime_to_instructions,
-        debug_mode=debug_mode
-    )
+    # Убираем None значения для чистоты
+    agent_params = {k: v for k, v in agent_params.items() if v is not None}
+    
+    return Agent(**agent_params)
