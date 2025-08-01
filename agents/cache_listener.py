@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from agents.agent_cache import agent_cache
 from agents.tools_cache import tools_cache  
 from agents.selector import invalidate_available_agents_cache
+from agents.team_manager import invalidate_team_caches
 from db.session import db_url
 
 logger = logging.getLogger(__name__)
@@ -137,10 +138,15 @@ class CacheInvalidationListener:
                     logger.info(f"Invalidated available agents cache due to INSERT: {agent_id}")
                     
                 elif operation == 'DELETE':
-                    # Агент удален - инвалидируем конкретного агента + список
+                    # Агент удален - инвалидируем конкретного агента + список + команды
                     if agent_id:
                         invalidated_count = agent_cache.invalidate_agent(agent_id)
                         logger.info(f"Invalidated agent cache: {agent_id} ({invalidated_count} entries)")
+                        
+                        # Инвалидируем все команды, в которых участвует этот агент
+                        invalidate_team_caches(agent_id)
+                        logger.info(f"Invalidated team caches for agent: {agent_id}")
+                        
                     invalidate_available_agents_cache()
                     logger.info(f"Invalidated available agents cache due to DELETE: {agent_id}")
             

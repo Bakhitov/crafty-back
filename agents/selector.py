@@ -10,6 +10,9 @@ from agents.web_agent import get_web_agent
 # Новая функциональность для динамических агентов
 from agents.tools_loader import load_tools_for_agent
 from agents.agent_cache import agent_cache  # ← КЭШ С УЧЕТОМ КОНФИГУРАЦИЙ
+from agents.tool_hooks import get_tool_hooks
+from agents.response_models import get_response_model
+from agents.team_manager import get_team_manager
 from db.models.agent import DynamicAgent
 from db.session import get_db
 
@@ -164,14 +167,17 @@ def _create_agent_from_db(
     # Получаем конфигурацию агента
     agent_config = dynamic_agent.agent_config or {}
     
-    # Storage (как в существующих агентах)
-    storage_config = agent_config.get("storage", {})
-    storage_table = storage_config.get("table_name", "sessions")
-    storage = PostgresAgentStorage(
-        table_name=storage_table, 
-        db_url=db_url,
-        schema="public"
-    )
+    # Storage (опционально, как Memory и Knowledge)
+    storage = None
+    storage_config = agent_config.get("storage")
+    if storage_config is not None:  # Секция storage есть в конфиге
+        if storage_config.get("enabled", True):  # enabled по умолчанию True ТОЛЬКО если секция storage указана
+            storage_table = storage_config.get("table_name", "sessions")
+            storage = PostgresAgentStorage(
+                table_name=storage_table, 
+                db_url=db_url,
+                schema="public"
+            )
     
     # Memory (КРИТИЧНО для continue endpoint!)
     memory = None
@@ -299,7 +305,7 @@ def _create_agent_from_db(
         "show_tool_calls": agent_config.get("show_tool_calls", True),
         "tool_call_limit": agent_config.get("tool_call_limit"),
         "tool_choice": agent_config.get("tool_choice"),
-        "tool_hooks": agent_config.get("tool_hooks"),
+        "tool_hooks": _get_tool_hooks_from_config(agent_config.get("tool_hooks")),
         
         # 9.2 Стандартные инструменты
         "read_chat_history": history_config.get("read_chat_history", True),
@@ -347,7 +353,7 @@ def _create_agent_from_db(
         "exponential_backoff": agent_config.get("exponential_backoff", False),
         
         # 14.2 Модель ответа и парсинг
-        "response_model": agent_config.get("response_model"),
+        "response_model": _get_response_model_from_config(agent_config.get("response_model")),
         "parser_model": parser_model,
         "parser_model_prompt": parser_config.get("prompt"),
         "parse_response": agent_config.get("parse_response", True),
@@ -362,7 +368,7 @@ def _create_agent_from_db(
         "events_to_skip": agent_config.get("events_to_skip"),
         
         # 16. Команда агентов
-        "team": agent_config.get("team"),
+        "team": _get_team_from_config(agent_config.get("team"), db, user_id, debug_mode),
         "team_data": agent_config.get("team_data"),
         "role": dynamic_agent.role or agent_config.get("role"),  # Приоритет: DB поле -> agent_config
         "respond_directly": agent_config.get("respond_directly", False),
@@ -389,3 +395,85 @@ def _create_agent_from_db(
     agent_params = {k: v for k, v in agent_params.items() if v is not None}
     
     return Agent(**agent_params)
+
+
+def _get_tool_hooks_from_config(tool_hooks_config):
+    """
+    Обработка tool_hooks конфигурации - поддержка имен и объектов
+    
+    Args:
+        tool_hooks_config: Конфигурация из agent_config.tool_hooks
+        
+    Returns:
+        Список hook функций или None
+    """
+    if not tool_hooks_config:
+        return None
+        
+    if isinstance(tool_hooks_config, list):
+        if all(isinstance(h, str) for h in tool_hooks_config):
+            # Список имен hook'ов - загружаем из реестра
+            return get_tool_hooks(tool_hooks_config)
+        else:
+            # Уже список функций (для совместимости)
+            return tool_hooks_config
+    
+    return None
+
+
+def _get_response_model_from_config(response_model_config):
+    """
+    Обработка response_model конфигурации - поддержка имен моделей
+    
+    Args:
+        response_model_config: Конфигурация из agent_config.response_model
+        
+    Returns:
+        Pydantic модель или None
+    """
+    if not response_model_config:
+        return None
+    
+    if isinstance(response_model_config, str):
+        # Имя модели - загружаем из реестра
+        model_class = get_response_model(response_model_config)
+        if not model_class:
+            from agno.utils.log import log_warning
+            log_warning(f"Response model '{response_model_config}' not found in registry")
+        return model_class
+    else:
+        # Уже объект класса (для совместимости)
+        return response_model_config
+
+
+def _get_team_from_config(team_config, db, user_id, debug_mode):
+    """
+    Обработка team конфигурации - поддержка agent_id ссылок
+    
+    Args:
+        team_config: Конфигурация из agent_config.team 
+        db: Сессия базы данных
+        user_id: ID пользователя для контекста
+        debug_mode: Режим отладки
+        
+    Returns:
+        Список Agent объектов или None
+    """
+    if not team_config:
+        return None
+    
+    if isinstance(team_config, list):
+        if all(isinstance(agent_id, str) for agent_id in team_config):
+            # Список agent_id - создаем команду через TeamManager
+            team_manager = get_team_manager(db)
+            team_agents = team_manager.build_team(
+                team_config, 
+                user_id=user_id, 
+                debug_mode=debug_mode
+            )
+            return team_agents if team_agents else None
+        else:
+            # Уже список Agent объектов (для совместимости)
+            return team_config
+    
+    return None

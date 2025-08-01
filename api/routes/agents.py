@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 
 from agents.agno_assist import get_agno_assist_knowledge
 from agents.selector import AgentType, get_agent, get_available_agents
+from agents.tool_hooks import list_available_hooks, get_hook_descriptions
+from agents.response_models import list_available_models, get_models_info, get_model_schema
+from agents.team_manager import get_all_cache_stats, clear_all_team_caches
 from api.utils.file_processing import process_files
 from db.session import get_db
 
@@ -34,6 +37,108 @@ async def list_agents(db: Session = Depends(get_db)):
         List[str]: List of agent identifiers
     """
     return get_available_agents(db)
+
+
+@agents_router.get("/tool-hooks")
+async def list_tool_hooks():
+    """
+    Получить список доступных Tool Hooks для динамических агентов.
+    
+    Returns:
+        Dict с списком hooks, описаниями и примерами использования
+    """
+    return {
+        "hooks": list_available_hooks(),
+        "descriptions": get_hook_descriptions(),
+        "usage": "Используйте имена hooks в agent_config.tool_hooks как массив строк",
+        "examples": {
+            "basic_logging": ["logging"],
+            "production_safe": ["logging", "validation", "rate_limiting", "metrics"],
+            "cached_tools": ["logging", "cache_5min", "validation"],
+            "development": ["logging", "error_recovery"],
+            "high_performance": ["cache_15min", "metrics", "rate_limiting_relaxed"]
+        }
+    }
+
+
+@agents_router.get("/response-models")
+async def list_response_models():
+    """
+    Получить список доступных Response Models для динамических агентов.
+    
+    Returns:
+        Dict с информацией о всех доступных Pydantic моделях
+    """
+    return {
+        "models": list_available_models(),
+        "models_info": get_models_info(),
+        "usage": "Используйте имя модели в agent_config.response_model как строку",
+        "examples": {
+            "simple_task": "TaskResult",
+            "search_agent": "SearchResult", 
+            "document_processor": "DocumentSummary",
+            "user_analyzer": "UserAnalysis",
+            "financial_bot": "FinancialAnalysis",
+            "code_reviewer": "CodeAnalysis",
+            "translator": "TranslationResult",
+            "qa_bot": "QuestionAnswer",
+            "email_assistant": "EmailDraft"
+        }
+    }
+
+
+@agents_router.get("/response-models/{model_name}/schema")
+async def get_response_model_schema(model_name: str):
+    """
+    Получить JSON Schema для конкретной Response Model.
+    
+    Args:
+        model_name: Имя модели
+        
+    Returns:
+        JSON Schema модели или 404 если модель не найдена
+    """
+    schema = get_model_schema(model_name)
+    if not schema:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Response model '{model_name}' not found"
+        )
+    
+    return {
+        "model_name": model_name,
+        "schema": schema
+    }
+
+
+@agents_router.get("/teams/cache-stats")
+async def get_team_cache_stats():
+    """
+    Получить статистику кэша команд агентов.
+    
+    Returns:
+        Статистика всех кэшей команд
+    """
+    return {
+        "cache_stats": get_all_cache_stats(),
+        "info": "Статистика кэшей команд для всех сессий БД"
+    }
+
+
+@agents_router.delete("/teams/cache")
+async def clear_team_cache():
+    """
+    Очистить все кэши команд агентов.
+    
+    Returns:
+        Подтверждение очистки кэша
+    """
+    clear_all_team_caches()
+    return {
+        "success": True,
+        "message": "All team caches cleared",
+        "info": "Кэши команд очищены для всех сессий БД"
+    }
 
 
 async def chat_response_streamer(
